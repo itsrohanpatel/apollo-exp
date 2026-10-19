@@ -43,7 +43,17 @@
   let isHarvestingActive = false;
   let harvestAbort = false;
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const sleep = (ms) => new Promise(r => {
+    const step = 200;
+    let elapsed = 0;
+    const interval = setInterval(() => {
+      elapsed += step;
+      if (harvestAbort || elapsed >= ms) {
+        clearInterval(interval);
+        r();
+      }
+    }, step);
+  });
   const getJitter = (min = 2000, max = 3800) => Math.floor(Math.random() * (max - min + 1)) + min;
 
   // ECC Latency-Critical Systems: Adaptive Server Pressure Pacer
@@ -165,8 +175,11 @@
     };
 
     for (const [paramKey, apiKey] of Object.entries(arrayMappings)) {
-      const vals = params.getAll(paramKey);
-      if (vals.length > 0) result[apiKey] = vals;
+      const baseKey = paramKey.replace('[]', '');
+      const valsWithBrackets = params.getAll(paramKey);
+      const valsWithout = params.getAll(baseKey);
+      const combined = [...valsWithBrackets, ...valsWithout];
+      if (combined.length > 0) result[apiKey] = combined;
     }
 
     for (const [paramKey, apiKey] of Object.entries(stringMappings)) {
@@ -174,8 +187,13 @@
       if (val) result[apiKey] = val;
     }
 
-    const revMin = params.get('revenueRange[min]');
-    const revMax = params.get('revenueRange[max]');
+    const sortBy = params.get('sortByField');
+    if (sortBy) result.sort_by_field = sortBy;
+    const sortAsc = params.get('sortAscending');
+    if (sortAsc !== null) result.sort_ascending = sortAsc === 'true';
+
+    const revMin = params.get('revenueRange[min]') || params.get('revenueRange.min');
+    const revMax = params.get('revenueRange[max]') || params.get('revenueRange.max');
     if (revMin || revMax) {
       result.revenue_range = {};
       if (revMin) result.revenue_range.min = parseInt(revMin, 10);
@@ -292,68 +310,104 @@
   function isHighDensityBracket(bracket) {
     if (!bracket || !bracket[0]) return false;
     const str = bracket[0];
+    if (['1,10', '11,20', '21,50', '51,100', '101,200', '201,500', '501,1000', '1001,5000', '5001,10000'].includes(str)) return true;
     const parts = str.split(',').map(s => parseInt(s.trim(), 10));
     if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
       const [min, max] = parts;
       if (min === max) return false;
-      return max <= 500 && (max - min) >= 4;
+      return (max - min) >= 4;
     }
     return false;
   }
 
   // Helper: decompose broad range into sub-250 micro ranges
   function decomposeHighDensityBracket(bracketStr) {
+    if (typeof bracketStr !== 'string') return [[bracketStr]];
     const parts = bracketStr.split(',').map(s => parseInt(s.trim(), 10));
     if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) {
       return [[bracketStr]];
     }
 
     const [min, max] = parts;
+    if (min === max) {
+      return [[`${min},${max}`]];
+    }
 
-    // Small business <= 20: exact single integers (e.g. 5,5, 6,6, ...)
-    if (max <= 20) {
-      const singleIntegers = [];
-      for (let i = min; i <= max; i++) {
-        singleIntegers.push([`${i},${i}`]);
+    const steps = [];
+    let cur = min;
+
+    while (cur <= max) {
+      if (cur <= 20) {
+        const segEnd = Math.min(20, max);
+        for (let i = cur; i <= segEnd; i++) {
+          steps.push([`${i},${i}`]);
+        }
+        cur = segEnd + 1;
+      } else if (cur <= 50) {
+        const segEnd = Math.min(50, max);
+        while (cur <= segEnd) {
+          const next = Math.min(cur + 4, segEnd);
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else if (cur <= 100) {
+        const segEnd = Math.min(100, max);
+        while (cur <= segEnd) {
+          const next = Math.min(cur + 9, segEnd);
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else if (cur <= 200) {
+        const segEnd = Math.min(200, max);
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 150) next = Math.min(150, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else if (cur <= 500) {
+        const segEnd = Math.min(500, max);
+        while (cur <= segEnd) {
+          const next = Math.min(cur + 49, segEnd);
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else if (cur <= 1000) {
+        const segEnd = Math.min(1000, max);
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 750) next = Math.min(750, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else if (cur <= 5000) {
+        const segEnd = Math.min(5000, max);
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 2000) next = Math.min(2000, segEnd);
+          else if (cur <= 3500) next = Math.min(3500, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else if (cur <= 10000) {
+        const segEnd = Math.min(10000, max);
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 7500) next = Math.min(7500, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else {
+        steps.push(['10001']);
+        break;
       }
-      return singleIntegers;
     }
 
-    // Lower mid-market 21-50: 5-step micro ranges
-    if (min >= 21 && max <= 50) {
-      const steps = [];
-      let cur = min;
-      while (cur <= max) {
-        const next = Math.min(cur + 4, max);
-        steps.push([`${cur},${next}`]);
-        cur = next + 1;
-      }
-      return steps;
-    }
-
-    // Upper mid-market 51-100: 10-step micro ranges
-    if (min >= 51 && max <= 100) {
-      const steps = [];
-      let cur = min;
-      while (cur <= max) {
-        const next = Math.min(cur + 9, max);
-        steps.push([`${cur},${next}`]);
-        cur = next + 1;
-      }
-      return steps;
-    }
-
-    // 101-200: split into 101-150 and 151-200
-    if (min >= 101 && max <= 200) {
-      return [['101,150'], ['151,200']];
-    }
-
-    // 201-500: split into 201-350 and 351-500
-    if (min >= 201 && max <= 500) {
-      return [['201,350'], ['351,500']];
-    }
-
-    return [[`${min},${max}`]];
+    return steps.length > 0 ? steps : [[`${min},${max}`]];
   }
 
   const STANDARD_MACRO_INTERVALS = [
@@ -373,8 +427,8 @@
     if (typeof openRangeStr !== 'string') return [['10001']];
     const trimmed = openRangeStr.trim();
 
-    if (trimmed.endsWith(',')) {
-      const lower = parseInt(trimmed.replace(',', ''), 10) || 1;
+    if (trimmed.endsWith(',') || trimmed.endsWith('+')) {
+      const lower = parseInt(trimmed.replace(/[,+]/g, ''), 10) || 1;
       const brackets = [];
       for (const interval of STANDARD_MACRO_INTERVALS) {
         if (interval.max < lower) continue;
@@ -406,31 +460,42 @@
     return [[trimmed]];
   }
 
+  // Generate Complete Adaptive Micro-Brackets for Open Range or Universal Set
+  function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,') {
+    const macroBrackets = expandOpenHeadcountRange(openRangeLowerStr).map(b => b[0]);
+    const microBrackets = [];
+    for (const macro of macroBrackets) {
+      if (macro === '10001') {
+        microBrackets.push(['10001']);
+      } else if (isHighDensityBracket([macro])) {
+        microBrackets.push(...decomposeHighDensityBracket(macro));
+      } else {
+        microBrackets.push([macro]);
+      }
+    }
+    return microBrackets;
+  }
+
   // Helper to extract active brackets or decompose into adaptive micro-brackets
   function resolveExecutionBrackets(basePayload) {
     const customRanges = basePayload?.organization_num_employees_ranges;
     if (Array.isArray(customRanges) && customRanges.length > 0) {
-      if (customRanges.length === 1 && typeof customRanges[0] === 'string' && (customRanges[0].endsWith(',') || customRanges[0].startsWith(','))) {
-        const macroBrackets = expandOpenHeadcountRange(customRanges[0]);
-
-        const micro = [];
-        for (const macroItem of macroBrackets) {
-          const macro = macroItem[0];
-          if (macro === '10001') {
-            micro.push(['10001']);
-          } else if (isHighDensityBracket([macro])) {
-            micro.push(...decomposeHighDensityBracket(macro));
-          } else {
-            micro.push([macro]);
-          }
-        }
-        return micro;
-      }
-
       const out = [];
       for (const r of customRanges) {
-        const str = Array.isArray(r) ? r[0] : r;
-        if (typeof str === 'string' && isHighDensityBracket([str])) {
+        const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : String(r));
+        if (typeof str === 'string' && (str.endsWith(',') || str.endsWith('+') || str.startsWith(','))) {
+          const expanded = expandOpenHeadcountRange(str);
+          for (const item of expanded) {
+            const macro = item[0];
+            if (macro === '10001') {
+              out.push(['10001']);
+            } else if (isHighDensityBracket([macro])) {
+              out.push(...decomposeHighDensityBracket(macro));
+            } else {
+              out.push([macro]);
+            }
+          }
+        } else if (typeof str === 'string' && isHighDensityBracket([str])) {
           out.push(...decomposeHighDensityBracket(str));
         } else {
           out.push(Array.isArray(r) ? r : [r]);
@@ -438,7 +503,18 @@
       }
       return out;
     }
-    return UNIVERSAL_HEADCOUNT_BRACKETS;
+    const universal = [];
+    for (const b of UNIVERSAL_HEADCOUNT_BRACKETS) {
+      const macro = b[0];
+      if (macro === '10001') {
+        universal.push(['10001']);
+      } else if (isHighDensityBracket([macro])) {
+        universal.push(...decomposeHighDensityBracket(macro));
+      } else {
+        universal.push([macro]);
+      }
+    }
+    return universal;
   }
 
   // 3. Autonomous Universal Deep Harvester
@@ -574,14 +650,15 @@
             ...base,
             _isHarvestEngine: true,
             page: 1,
-            per_page: 25,
-            organization_ids_excluded: Array.from(harvestedOrgIds),
-            excluded_organization_ids: Array.from(harvestedOrgIds)
+            per_page: 25
           };
           if (urlFilters.organization_num_employees_ranges) {
             payload.organization_num_employees_ranges = urlFilters.organization_num_employees_ranges;
           }
-          if (!isCompanies) {
+          if (isCompanies) {
+            payload.organization_ids_excluded = Array.from(harvestedOrgIds);
+            payload.excluded_organization_ids = Array.from(harvestedOrgIds);
+          } else {
             payload.person_ids_excluded = Array.from(harvestedIds);
           }
 
@@ -807,6 +884,157 @@
 
               // If fewer than 25 returned or no new unique records, break this pass
               if (items.length < 25 || newInPage === 0) break;
+
+              await sleep(pacer.computeNextDelay());
+            }
+          }
+
+          // Seniority Pivot for Indivisible Enterprise Band (10001+)
+          if (!isCompanies && bracketLabel === '10001' && cabinetTotalEntries > 250 && harvestedIds.size < targetLeads && !harvestAbort) {
+            const SENIORITIES = ['founder', 'c_suite', 'partner', 'vp', 'head', 'director', 'manager', 'senior', 'entry'];
+            for (const sen of SENIORITIES) {
+              if (harvestedIds.size >= targetLeads || harvestAbort) break;
+              reportProgress(`[10001+] Pivoting Seniority: ${sen}...`, sliceIdx + 1, totalSlices);
+
+              for (let page = 1; page <= 5; page++) {
+                if (harvestedIds.size >= targetLeads || harvestAbort) break;
+                requestCount++;
+                if (requestCount > 1 && requestCount % 10 === 0) {
+                  reportProgress('Taking anti-ban cooldown pause (40s)...', sliceIdx + 1, totalSlices);
+                  await sleep(40000);
+                  if (harvestAbort) break;
+                }
+
+                const senPayload = {
+                  ...base,
+                  _isHarvestEngine: true,
+                  page: page,
+                  per_page: 25,
+                  organization_num_employees_ranges: ['10001'],
+                  person_seniorities: [sen]
+                };
+
+                const tSenStart = Date.now();
+                const senRes = await rawFetch(searchEndpoint, {
+                  method: 'POST',
+                  headers: getApolloHeaders(),
+                  body: JSON.stringify(senPayload)
+                });
+                pacer.recordRoundTrip(Date.now() - tSenStart);
+
+                if (senRes.status === 429 || senRes.status === 403) {
+                  window.postMessage({
+                    type: 'APOLLO_HARVEST_HALTED',
+                    reason: senRes.status === 429 ? 'RATE_LIMIT_429' : 'BLOCKED_403'
+                  }, '*');
+                  harvestAbort = true;
+                  break;
+                }
+                if (senRes.status !== 200) break;
+
+                let senData = null;
+                try { senData = await senRes.json(); } catch (e) { break; }
+                const senItems = senData.people || [];
+                if (senItems.length === 0) break;
+
+                let newInSen = 0;
+                for (const item of senItems) {
+                  if (item.id && !harvestedIds.has(item.id)) {
+                    harvestedIds.add(item.id);
+                    cabinetHarvestedIds.add(item.id);
+                    newInSen++;
+                  }
+                  if (item.organization_id) cabinetHarvestedOrgIds.add(item.organization_id);
+                  if (item.organization?.id) cabinetHarvestedOrgIds.add(item.organization.id);
+                }
+
+                processResponse(searchEndpoint, senData);
+                reportProgress(`[10001+] ${sen} Harvested ${cabinetHarvestedIds.size} of ${cabinetTotalEntries}`, sliceIdx + 1, totalSlices);
+                if (senItems.length < 25 || newInSen === 0) break;
+
+                await sleep(pacer.computeNextDelay());
+              }
+            }
+          }
+
+          // Cabinet-Scoped Dynamic Exclusion for any dense bracket with remaining unharvested leads
+          if (cabinetTotalEntries && cabinetTotalEntries > 250 && cabinetHarvestedIds.size < cabinetTotalEntries && harvestedIds.size < targetLeads && !harvestAbort) {
+            reportProgress(`[${bracketLabel}] Deep draining remaining leads (${cabinetHarvestedIds.size} of ${cabinetTotalEntries})...`, sliceIdx + 1, totalSlices);
+
+            let dynamicStagnation = 0;
+
+            while (cabinetHarvestedIds.size < cabinetTotalEntries && harvestedIds.size < targetLeads && !harvestAbort) {
+              requestCount++;
+              if (requestCount > 1 && requestCount % 10 === 0) {
+                reportProgress('Taking anti-ban cooldown pause (40s)...', sliceIdx + 1, totalSlices);
+                await sleep(40000);
+                if (harvestAbort) break;
+              }
+
+              const drainPayload = {
+                ...base,
+                _isHarvestEngine: true,
+                page: 1,
+                per_page: 25,
+                organization_num_employees_ranges: bracket
+              };
+
+              if (isCompanies) {
+                drainPayload.organization_ids_excluded = Array.from(cabinetHarvestedOrgIds);
+                drainPayload.excluded_organization_ids = Array.from(cabinetHarvestedOrgIds);
+              } else {
+                drainPayload.person_ids_excluded = Array.from(cabinetHarvestedIds);
+              }
+
+              const tDrainStart = Date.now();
+              const drainRes = await rawFetch(searchEndpoint, {
+                method: 'POST',
+                headers: getApolloHeaders(),
+                body: JSON.stringify(drainPayload)
+              });
+              pacer.recordRoundTrip(Date.now() - tDrainStart);
+
+              if (drainRes.status === 429 || drainRes.status === 403) {
+                window.postMessage({
+                  type: 'APOLLO_HARVEST_HALTED',
+                  reason: drainRes.status === 429 ? 'RATE_LIMIT_429' : 'BLOCKED_403'
+                }, '*');
+                harvestAbort = true;
+                break;
+              }
+
+              if (drainRes.status !== 200) break;
+
+              let drainData = null;
+              try { drainData = await drainRes.json(); } catch (e) { break; }
+
+              const drainItems = isCompanies ? (drainData.organizations || []) : (drainData.people || []);
+              if (drainItems.length === 0) break;
+
+              let newInDrain = 0;
+              for (const item of drainItems) {
+                const id = item.id || (isCompanies ? (item.primary_domain || item.name) : null);
+                if (id && !harvestedIds.has(id)) {
+                  harvestedIds.add(id);
+                  cabinetHarvestedIds.add(id);
+                  newInDrain++;
+                }
+                if (item.organization_id) cabinetHarvestedOrgIds.add(item.organization_id);
+                if (item.organization?.id) cabinetHarvestedOrgIds.add(item.organization.id);
+                if (isCompanies && item.id) cabinetHarvestedOrgIds.add(item.id);
+              }
+
+              processResponse(searchEndpoint, drainData);
+              reportProgress(`[${bracketLabel}] Deep Drain Harvested ${cabinetHarvestedIds.size} of ${cabinetTotalEntries}`, sliceIdx + 1, totalSlices);
+
+              if (newInDrain === 0) {
+                dynamicStagnation++;
+                if (dynamicStagnation >= 2) break;
+              } else {
+                dynamicStagnation = 0;
+              }
+
+              if (cabinetHarvestedIds.size >= 450) break; // Apollo exclusion limit safety ceiling per bracket
 
               await sleep(pacer.computeNextDelay());
             }

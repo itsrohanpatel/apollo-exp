@@ -238,6 +238,7 @@ window.addEventListener('message', (event) => {
 
 // 4. Update HUD count from Storage
 function syncHUDFromStorage(data) {
+  if (!data) return;
   const isComp = (window.location.hash || window.location.href).includes('/companies');
   const typeLabelEl = document.getElementById('apollo-hud-type-label');
   const countEl = document.getElementById('apollo-hud-count');

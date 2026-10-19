@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'deepEnrichmentEnabled',
       'enrichmentStats'
     ], (data) => {
+      if (!data) data = {};
       const leadsCount = data.leadsCount || 0;
       const companiesCount = data.companiesCount || 0;
       const previewLeads = data.previewLeads || [];

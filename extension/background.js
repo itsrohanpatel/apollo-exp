@@ -30,6 +30,7 @@ const state = {
 
 // Initialize from chrome.storage.local
 chrome.storage.local.get(['scrapedLeads', 'scrapedCompanies', 'dailyHarvestedCount', 'deepEnrichmentEnabled', 'apollo_cached_orgs_v1'], (res) => {
+  if (!res) res = {};
   if (res.apollo_cached_orgs_v1 && typeof res.apollo_cached_orgs_v1 === 'object') {
     for (const [id, org] of Object.entries(res.apollo_cached_orgs_v1)) {
       if (org && (org.technologies || org.total_funding)) {
@@ -745,18 +746,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     };
     syncStorage();
 
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const targetTab = tabs[0] || (state.activeTabId ? { id: state.activeTabId } : null);
-      if (targetTab && targetTab.id) {
-        chrome.tabs.sendMessage(targetTab.id, {
-          action: 'START_UNIVERSAL_HARVEST',
-          config: request.config
-        }, (res) => {
-          sendResponse({ success: true, isHarvesting: true });
-        });
-      } else {
-        sendResponse({ success: false, reason: 'No active Apollo tab found' });
-      }
+    chrome.tabs.query({ url: '*://*.apollo.io/*' }, (apolloTabs) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const targetTab = (apolloTabs && apolloTabs[0]) || tabs[0] || (state.activeTabId ? { id: state.activeTabId } : null);
+        if (targetTab && targetTab.id) {
+          chrome.tabs.sendMessage(targetTab.id, {
+            action: 'START_UNIVERSAL_HARVEST',
+            config: request.config
+          }, (res) => {
+            sendResponse({ success: true, isHarvesting: true });
+          });
+        } else {
+          sendResponse({ success: false, reason: 'No active Apollo tab found' });
+        }
+      });
     });
     return true;
   }
@@ -766,11 +769,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     state.harvestProgress.status = 'Stopped';
     syncStorage();
 
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const targetTab = tabs[0] || (state.activeTabId ? { id: state.activeTabId } : null);
-      if (targetTab && targetTab.id) {
-        chrome.tabs.sendMessage(targetTab.id, { action: 'STOP_UNIVERSAL_HARVEST' });
-      }
+    chrome.tabs.query({ url: '*://*.apollo.io/*' }, (apolloTabs) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const targetTab = (apolloTabs && apolloTabs[0]) || tabs[0] || (state.activeTabId ? { id: state.activeTabId } : null);
+        if (targetTab && targetTab.id) {
+          chrome.tabs.sendMessage(targetTab.id, { action: 'STOP_UNIVERSAL_HARVEST' });
+        }
+      });
     });
     sendResponse({ success: true, isHarvesting: false });
     return true;
@@ -788,6 +793,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       };
       syncStorage();
     }
+    sendResponse({ success: true });
     return true;
   }
 
@@ -797,6 +803,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     state.circuitBreaker.reason = request.reason || 'SECURITY_TRIGGERED';
     state.harvestProgress.status = `Halted (${request.reason})`;
     syncStorage();
+    sendResponse({ success: true });
     return true;
   }
 
@@ -804,6 +811,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     state.isHarvesting = false;
     state.harvestProgress.status = 'Complete';
     syncStorage();
+    sendResponse({ success: true });
     return true;
   }
 
@@ -914,6 +922,12 @@ function buildChunkedUnionCSV(items, preferredOrder = [], chunkSize = 2500) {
           val = JSON.stringify(val);
         } else {
           val = String(val);
+        }
+
+        // Collapse multiline text and escape formula injection characters
+        val = val.replace(/[\r\n]+/g, ' ').trim();
+        if (/^[=+\-@\t\r]/.test(val)) {
+          val = "'" + val;
         }
 
         if (val.includes('"') || val.includes(',') || val.includes('\n') || val.includes('\r')) {

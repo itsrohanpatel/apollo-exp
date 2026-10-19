@@ -194,9 +194,9 @@ export function expandOpenHeadcountRange(openRangeStr = '1,') {
   if (typeof openRangeStr !== 'string') return [['10001']];
   const trimmed = openRangeStr.trim();
 
-  // Case 1: lower-bounded open range like "5," or "50," (lower+)
-  if (trimmed.endsWith(',')) {
-    const lower = parseInt(trimmed.replace(',', ''), 10) || 1;
+  // Case 1: lower-bounded open range like "5,", "50,", "50+", "10001+" (lower+)
+  if (trimmed.endsWith(',') || trimmed.endsWith('+')) {
+    const lower = parseInt(trimmed.replace(/[,+]/g, ''), 10) || 1;
     const brackets = [];
     for (const interval of STANDARD_MACRO_INTERVALS) {
       if (interval.max < lower) {
@@ -278,9 +278,12 @@ export function parseApolloUrlHash(urlOrHash = '') {
   };
 
   for (const [paramKey, apiKey] of Object.entries(arrayMappings)) {
-    const vals = params.getAll(paramKey);
-    if (vals.length > 0) {
-      result[apiKey] = vals;
+    const baseKey = paramKey.replace('[]', '');
+    const valsWithBrackets = params.getAll(paramKey);
+    const valsWithout = params.getAll(baseKey);
+    const combined = [...valsWithBrackets, ...valsWithout];
+    if (combined.length > 0) {
+      result[apiKey] = combined;
     }
   }
 
@@ -291,8 +294,13 @@ export function parseApolloUrlHash(urlOrHash = '') {
     }
   }
 
-  const revMin = params.get('revenueRange[min]');
-  const revMax = params.get('revenueRange[max]');
+  const sortBy = params.get('sortByField');
+  if (sortBy) result.sort_by_field = sortBy;
+  const sortAsc = params.get('sortAscending');
+  if (sortAsc !== null) result.sort_ascending = sortAsc === 'true';
+
+  const revMin = params.get('revenueRange[min]') || params.get('revenueRange.min');
+  const revMax = params.get('revenueRange[max]') || params.get('revenueRange.max');
   if (revMin || revMax) {
     result.revenue_range = {};
     if (revMin) result.revenue_range.min = parseInt(revMin, 10);
@@ -306,13 +314,53 @@ export function parseApolloUrlHash(urlOrHash = '') {
 export function resolveHarvestExecutionPlan(basePayload = {}) {
   const customRanges = basePayload.organization_num_employees_ranges;
   if (Array.isArray(customRanges) && customRanges.length > 0) {
-    // If user provided a single open range like "5," or "50,", expand it into continuous sub-brackets
-    if (customRanges.length === 1 && typeof customRanges[0] === 'string' && (customRanges[0].endsWith(',') || customRanges[0].startsWith(','))) {
+    if (customRanges.length === 1 && typeof customRanges[0] === 'string' && (customRanges[0].endsWith(',') || customRanges[0].endsWith('+') || customRanges[0].startsWith(','))) {
       return expandOpenHeadcountRange(customRanges[0]);
     }
     return customRanges.map(r => Array.isArray(r) ? r : [r]);
   }
   return [...UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS];
+}
+
+// 9b. Micro-Bracket Execution Plan Resolver (Decomposes macro brackets into adaptive micro-cabinets)
+export function resolveExecutionBrackets(basePayload = {}) {
+  const customRanges = basePayload.organization_num_employees_ranges;
+  if (Array.isArray(customRanges) && customRanges.length > 0) {
+    const out = [];
+    for (const r of customRanges) {
+      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : String(r));
+      if (typeof str === 'string' && (str.endsWith(',') || str.endsWith('+') || str.startsWith(','))) {
+        const expanded = expandOpenHeadcountRange(str);
+        for (const item of expanded) {
+          const macro = item[0];
+          if (macro === '10001') {
+            out.push(['10001']);
+          } else if (isHighDensityBracket([macro])) {
+            out.push(...decomposeHighDensityBracket(macro));
+          } else {
+            out.push([macro]);
+          }
+        }
+      } else if (typeof str === 'string' && isHighDensityBracket([str])) {
+        out.push(...decomposeHighDensityBracket(str));
+      } else {
+        out.push(Array.isArray(r) ? r : [r]);
+      }
+    }
+    return out;
+  }
+  const universal = [];
+  for (const b of UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS) {
+    const macro = b[0];
+    if (macro === '10001') {
+      universal.push(['10001']);
+    } else if (isHighDensityBracket([macro])) {
+      universal.push(...decomposeHighDensityBracket(macro));
+    } else {
+      universal.push([macro]);
+    }
+  }
+  return universal;
 }
 
 // 9. Cabinet Overflow Detector (Checks if cabinet has >125 leads and needs dynamic drain)
@@ -396,68 +444,104 @@ export function generateBidirectionalSortPlans(totalEntries) {
 export function isHighDensityBracket(bracket) {
   if (!bracket || !bracket[0]) return false;
   const str = bracket[0];
+  if (['1,10', '11,20', '21,50', '51,100', '101,200', '201,500', '501,1000', '1001,5000', '5001,10000'].includes(str)) return true;
   const parts = str.split(',').map(s => parseInt(s.trim(), 10));
   if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
     const [min, max] = parts;
     if (min === max) return false;
-    return max <= 500 && (max - min) >= 4;
+    return (max - min) >= 4;
   }
   return false;
 }
 
 // 15. Decompose High-Density Bracket into Sub-250 Micro-Ranges
 export function decomposeHighDensityBracket(bracketStr) {
+  if (typeof bracketStr !== 'string') return [[bracketStr]];
   const parts = bracketStr.split(',').map(s => parseInt(s.trim(), 10));
   if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) {
     return [[bracketStr]];
   }
 
   const [min, max] = parts;
+  if (min === max) {
+    return [[`${min},${max}`]];
+  }
 
-  // Small business 5-10 or 11-20: exact single integers
-  if (max <= 20) {
-    const singleIntegers = [];
-    for (let i = min; i <= max; i++) {
-      singleIntegers.push([`${i},${i}`]);
+  const steps = [];
+  let cur = min;
+
+  while (cur <= max) {
+    if (cur <= 20) {
+      const segEnd = Math.min(20, max);
+      for (let i = cur; i <= segEnd; i++) {
+        steps.push([`${i},${i}`]);
+      }
+      cur = segEnd + 1;
+    } else if (cur <= 50) {
+      const segEnd = Math.min(50, max);
+      while (cur <= segEnd) {
+        const next = Math.min(cur + 4, segEnd);
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+    } else if (cur <= 100) {
+      const segEnd = Math.min(100, max);
+      while (cur <= segEnd) {
+        const next = Math.min(cur + 9, segEnd);
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+    } else if (cur <= 200) {
+      const segEnd = Math.min(200, max);
+      while (cur <= segEnd) {
+        let next;
+        if (cur <= 150) next = Math.min(150, segEnd);
+        else next = segEnd;
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+    } else if (cur <= 500) {
+      const segEnd = Math.min(500, max);
+      while (cur <= segEnd) {
+        const next = Math.min(cur + 49, segEnd);
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+    } else if (cur <= 1000) {
+      const segEnd = Math.min(1000, max);
+      while (cur <= segEnd) {
+        let next;
+        if (cur <= 750) next = Math.min(750, segEnd);
+        else next = segEnd;
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+    } else if (cur <= 5000) {
+      const segEnd = Math.min(5000, max);
+      while (cur <= segEnd) {
+        let next;
+        if (cur <= 2000) next = Math.min(2000, segEnd);
+        else if (cur <= 3500) next = Math.min(3500, segEnd);
+        else next = segEnd;
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+    } else if (cur <= 10000) {
+      const segEnd = Math.min(10000, max);
+      while (cur <= segEnd) {
+        let next;
+        if (cur <= 7500) next = Math.min(7500, segEnd);
+        else next = segEnd;
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+    } else {
+      steps.push(['10001']);
+      break;
     }
-    return singleIntegers;
   }
 
-  // Lower mid-market 21-50: 5-step micro ranges
-  if (min >= 21 && max <= 50) {
-    const steps = [];
-    let cur = min;
-    while (cur <= max) {
-      const next = Math.min(cur + 4, max);
-      steps.push([`${cur},${next}`]);
-      cur = next + 1;
-    }
-    return steps;
-  }
-
-  // Upper mid-market 51-100: 10-step micro ranges
-  if (min >= 51 && max <= 100) {
-    const steps = [];
-    let cur = min;
-    while (cur <= max) {
-      const next = Math.min(cur + 9, max);
-      steps.push([`${cur},${next}`]);
-      cur = next + 1;
-    }
-    return steps;
-  }
-
-  // 101-200: split into 101-150 and 151-200
-  if (min >= 101 && max <= 200) {
-    return [['101,150'], ['151,200']];
-  }
-
-  // 201-500: split into 201-350 and 351-500
-  if (min >= 201 && max <= 500) {
-    return [['201,350'], ['351,500']];
-  }
-
-  return [[`${min},${max}`]];
+  return steps.length > 0 ? steps : [[`${min},${max}`]];
 }
 
 // 16. Generate Complete Adaptive Micro-Brackets for Open Range or Universal Set
@@ -1415,6 +1499,12 @@ export function buildChunkedUnionCSV(items, preferredOrder = [], chunkSize = 250
           val = JSON.stringify(val);
         } else {
           val = String(val);
+        }
+
+        // Collapse multiline text and escape formula injection characters
+        val = val.replace(/[\r\n]+/g, ' ').trim();
+        if (/^[=+\-@\t\r]/.test(val)) {
+          val = "'" + val;
         }
 
         if (val.includes('"') || val.includes(',') || val.includes('\n') || val.includes('\r')) {

@@ -47,9 +47,9 @@ function connectCDP(wsUrl) {
 
 async function main() {
   const tabs = await httpGet('http://127.0.0.1:9222/json');
-  const bgTarget = tabs.find(t => t.url && t.url.includes('ffddakdnlbekmilieeochlnkekkafbfe'));
+  const bgTarget = tabs.find(t => t.url && t.url.includes('chrome-extension://') && (t.type === 'service_worker' || t.type === 'page' || t.type === 'background_page'));
   if (!bgTarget) {
-    console.error('Extension page not found on 9222!');
+    console.error('Extension page or service worker not found on 9222!');
     return;
   }
 
