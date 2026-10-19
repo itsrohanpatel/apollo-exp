@@ -185,8 +185,13 @@ window.addEventListener('message', (event) => {
     if (countEl && harvestedCount !== undefined) countEl.innerText = harvestedCount;
     if (statusEl && status) statusEl.innerText = status;
     if (indicator) {
-      indicator.style.background = '#f59e0b';
-      indicator.style.boxShadow = '0 0 12px #f59e0b';
+      if (event.data.cooldownRemaining) {
+        indicator.style.background = '#38bdf8';
+        indicator.style.boxShadow = '0 0 12px #38bdf8';
+      } else {
+        indicator.style.background = '#f59e0b';
+        indicator.style.boxShadow = '0 0 12px #f59e0b';
+      }
     }
     if (stopBtn) stopBtn.style.display = 'block';
 

@@ -94,7 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
           progressSliceLabel.innerText = `${currentCount} / ${target >= 50000 ? 'ALL' : target} Items`;
         }
-        progressSubtext.innerText = progress.status || 'Pacing: 2.0s–3.8s jitter + 40s cooldowns';
+        progressSubtext.innerText = progress.status || 'Pacing: Adaptive jitter + smart cooldowns active';
 
       } else {
         statusIndicator.classList.remove('active');

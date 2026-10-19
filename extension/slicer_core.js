@@ -169,6 +169,56 @@ export function shouldTriggerCooldown(requestCount, leadCount, cooldownEveryNReq
   return false;
 }
 
+// 6b. Smart Cool-Down Check & Duration Calculator
+export function calculateSmartCooldownDuration(averageLatency = 500, hasRateLimitSignal = false, baseOptions = {}) {
+  const {
+    fastDuration = 18,
+    normalDuration = 32,
+    pressuredDuration = 55,
+    rateLimitDuration = 65
+  } = baseOptions;
+
+  if (hasRateLimitSignal) {
+    const jitter = Math.floor(Math.random() * 11) - 5;
+    return Math.max(45, rateLimitDuration + jitter);
+  }
+
+  if (averageLatency >= 1400) {
+    const jitter = Math.floor(Math.random() * 9) - 4;
+    return Math.max(35, pressuredDuration + jitter);
+  }
+
+  if (averageLatency >= 750) {
+    const jitter = Math.floor(Math.random() * 7) - 3;
+    return Math.max(25, normalDuration + jitter);
+  }
+
+  const jitter = Math.floor(Math.random() * 5) - 2;
+  return Math.max(12, fastDuration + jitter);
+}
+
+export function shouldTriggerSmartCooldown(stats, options = {}) {
+  const {
+    requestsSinceLastCooldown = 0,
+    leadsSinceLastCooldown = 0,
+    hasRateLimitSignal = false
+  } = stats || {};
+
+  if (hasRateLimitSignal) return true;
+
+  const maxRequests = options.maxRequests || 10;
+  const minLeads = options.minLeads !== undefined ? options.minLeads : 20;
+
+  if (requestsSinceLastCooldown >= maxRequests) {
+    if (leadsSinceLastCooldown < minLeads) {
+      return requestsSinceLastCooldown >= (options.emptyCabinetMaxRequests || 20);
+    }
+    return true;
+  }
+
+  return false;
+}
+
 // 7. Apollo Entity Type Detector
 export function detectApolloEntityType(urlOrHash = '') {
   if (typeof urlOrHash === 'string' && urlOrHash.includes('/companies')) {

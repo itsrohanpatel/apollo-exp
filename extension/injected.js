@@ -616,10 +616,12 @@
     delete base.person_ids_excluded;
 
     let requestCount = 0;
+    let requestsSinceLastCooldown = 0;
+    let leadsSinceLastCooldown = 0;
     const harvestedIds = new Set();
     const harvestedOrgIds = new Set();
 
-    const reportProgress = (status, currentSlice = 0, totalSlices = 0) => {
+    const reportProgress = (status, currentSlice = 0, totalSlices = 0, cooldownRemaining = null) => {
       window.postMessage({
         type: 'APOLLO_HARVEST_PROGRESS',
         entityType: entityType,
@@ -627,8 +629,48 @@
         targetLeads: targetLeads,
         currentSlice: currentSlice,
         totalSlices: totalSlices,
-        status: status
+        status: status,
+        cooldownRemaining: cooldownRemaining
       }, '*');
+    };
+
+    const executeSmartCooldown = async (sliceIdx = 0, totalSlices = 0, isRateLimit = false) => {
+      const avgLatency = pacer ? pacer.getAverageLatency() : 500;
+      let durationSeconds = 30;
+
+      if (isRateLimit) {
+        durationSeconds = 60 + Math.floor(Math.random() * 15); // 60s - 75s on 429
+      } else if (avgLatency >= 1400) {
+        durationSeconds = 50 + Math.floor(Math.random() * 10); // 50s - 60s under server pressure
+      } else if (avgLatency >= 750) {
+        durationSeconds = 30 + Math.floor(Math.random() * 8);  // 30s - 38s normal
+      } else {
+        durationSeconds = 18 + Math.floor(Math.random() * 6);  // 18s - 24s fast server
+      }
+
+      console.log(`[Apollo Extractor] Smart Cooldown initiated: ${durationSeconds}s (latency: ${avgLatency}ms, rateLimit: ${isRateLimit})`);
+
+      for (let remaining = durationSeconds; remaining > 0; remaining--) {
+        if (harvestAbort) break;
+        const statusMsg = isRateLimit
+          ? `Rate limit backoff: ${remaining}s remaining...`
+          : `Anti-ban cooldown: ${remaining}s remaining...`;
+        reportProgress(statusMsg, sliceIdx + 1, totalSlices, remaining);
+        await sleep(1000);
+      }
+
+      requestsSinceLastCooldown = 0;
+      leadsSinceLastCooldown = 0;
+    };
+
+    const checkAndTriggerCooldown = async (sliceIdx = 0, totalSlices = 0) => {
+      requestsSinceLastCooldown++;
+      const threshold = leadsSinceLastCooldown >= 20 ? 10 : 20;
+      if (requestsSinceLastCooldown > 1 && requestsSinceLastCooldown % threshold === 0) {
+        await executeSmartCooldown(sliceIdx, totalSlices, false);
+        return true;
+      }
+      return false;
     };
 
     try {
@@ -638,11 +680,7 @@
 
         while (harvestedIds.size < targetLeads && !harvestAbort) {
           requestCount++;
-
-          // Anti-ban batch cooldown (every 10 requests / 250 records)
-          if (requestCount > 1 && requestCount % 10 === 0) {
-            reportProgress('Taking anti-ban cooldown pause (40s)...');
-            await sleep(40000);
+          if (await checkAndTriggerCooldown(0, 1)) {
             if (harvestAbort) break;
           }
 
@@ -670,11 +708,18 @@
           });
           pacer.recordRoundTrip(Date.now() - tFetchStart);
 
-          if (res.status === 429 || res.status === 403) {
+          if (res.status === 429) {
+            console.warn('[Apollo Extractor] 429 Rate Limit encountered. Triggering smart backoff cooldown...');
+            await executeSmartCooldown(0, 1, true);
+            if (harvestAbort) break;
+            continue;
+          }
+
+          if (res.status === 403) {
             console.error(`[Apollo Extractor] Circuit breaker tripped! Status ${res.status}`);
             window.postMessage({
               type: 'APOLLO_HARVEST_HALTED',
-              reason: res.status === 429 ? 'RATE_LIMIT_429' : 'BLOCKED_403'
+              reason: 'BLOCKED_403'
             }, '*');
             break;
           }
@@ -729,9 +774,7 @@
             if (harvestedIds.size >= targetLeads || harvestAbort) break;
 
             requestCount++;
-            if (requestCount > 1 && requestCount % 10 === 0) {
-              reportProgress('Taking anti-ban cooldown pause (40s)...', sliceIdx + 1, totalSlices);
-              await sleep(40000);
+            if (await checkAndTriggerCooldown(sliceIdx, totalSlices)) {
               if (harvestAbort) break;
             }
 
@@ -751,10 +794,18 @@
             });
             pacer.recordRoundTrip(Date.now() - tFetchStart);
 
-            if (res.status === 429 || res.status === 403) {
+            if (res.status === 429) {
+              console.warn('[Apollo Extractor] 429 Rate Limit encountered. Triggering smart backoff cooldown...');
+              await executeSmartCooldown(sliceIdx, totalSlices, true);
+              if (harvestAbort) break;
+              page--;
+              continue;
+            }
+
+            if (res.status === 403) {
               window.postMessage({
                 type: 'APOLLO_HARVEST_HALTED',
-                reason: res.status === 429 ? 'RATE_LIMIT_429' : 'BLOCKED_403'
+                reason: 'BLOCKED_403'
               }, '*');
               harvestAbort = true;
               break;
@@ -766,10 +817,15 @@
             const items = isCompanies ? (data.organizations || []) : (data.people || []);
             if (items.length === 0) break;
 
+            let newInSlicePage = 0;
             for (const item of items) {
               const id = item.id || (isCompanies ? (item.primary_domain || item.name) : null);
-              if (id) harvestedIds.add(id);
+              if (id && !harvestedIds.has(id)) {
+                harvestedIds.add(id);
+                newInSlicePage++;
+              }
             }
+            leadsSinceLastCooldown += newInSlicePage;
 
             processResponse(searchEndpoint, data);
             reportProgress(`Harvesting [${bracket[0]}] Page ${page}`, sliceIdx + 1, totalSlices);
@@ -813,9 +869,7 @@
               if (harvestedIds.size >= targetLeads || harvestAbort) break;
 
               requestCount++;
-              if (requestCount > 1 && requestCount % 10 === 0) {
-                reportProgress('Taking anti-ban cooldown pause (40s)...', sliceIdx + 1, totalSlices);
-                await sleep(40000);
+              if (await checkAndTriggerCooldown(sliceIdx, totalSlices)) {
                 if (harvestAbort) break;
               }
 
@@ -836,10 +890,18 @@
               });
               pacer.recordRoundTrip(Date.now() - tFetchStart);
 
-              if (res.status === 429 || res.status === 403) {
+              if (res.status === 429) {
+                console.warn('[Apollo Extractor] 429 Rate Limit encountered. Triggering smart backoff cooldown...');
+                await executeSmartCooldown(sliceIdx, totalSlices, true);
+                if (harvestAbort) break;
+                page--;
+                continue;
+              }
+
+              if (res.status === 403) {
                 window.postMessage({
                   type: 'APOLLO_HARVEST_HALTED',
-                  reason: res.status === 429 ? 'RATE_LIMIT_429' : 'BLOCKED_403'
+                  reason: 'BLOCKED_403'
                 }, '*');
                 harvestAbort = true;
                 break;
@@ -878,6 +940,7 @@
                 if (isCompanies && item.id) cabinetHarvestedOrgIds.add(item.id);
               }
 
+              leadsSinceLastCooldown += newInPage;
               processResponse(searchEndpoint, data);
               const totalStr = cabinetTotalEntries ? ` of ${cabinetTotalEntries}` : '';
               reportProgress(`[${bracketLabel}] ${sortLabel} Harvested ${cabinetHarvestedIds.size}${totalStr}`, sliceIdx + 1, totalSlices);
@@ -899,9 +962,7 @@
               for (let page = 1; page <= 5; page++) {
                 if (harvestedIds.size >= targetLeads || harvestAbort) break;
                 requestCount++;
-                if (requestCount > 1 && requestCount % 10 === 0) {
-                  reportProgress('Taking anti-ban cooldown pause (40s)...', sliceIdx + 1, totalSlices);
-                  await sleep(40000);
+                if (await checkAndTriggerCooldown(sliceIdx, totalSlices)) {
                   if (harvestAbort) break;
                 }
 
@@ -922,10 +983,18 @@
                 });
                 pacer.recordRoundTrip(Date.now() - tSenStart);
 
-                if (senRes.status === 429 || senRes.status === 403) {
+                if (senRes.status === 429) {
+                  console.warn('[Apollo Extractor] 429 Rate Limit encountered. Triggering smart backoff cooldown...');
+                  await executeSmartCooldown(sliceIdx, totalSlices, true);
+                  if (harvestAbort) break;
+                  page--;
+                  continue;
+                }
+
+                if (senRes.status === 403) {
                   window.postMessage({
                     type: 'APOLLO_HARVEST_HALTED',
-                    reason: senRes.status === 429 ? 'RATE_LIMIT_429' : 'BLOCKED_403'
+                    reason: 'BLOCKED_403'
                   }, '*');
                   harvestAbort = true;
                   break;
@@ -948,6 +1017,7 @@
                   if (item.organization?.id) cabinetHarvestedOrgIds.add(item.organization.id);
                 }
 
+                leadsSinceLastCooldown += newInSen;
                 processResponse(searchEndpoint, senData);
                 reportProgress(`[10001+] ${sen} Harvested ${cabinetHarvestedIds.size} of ${cabinetTotalEntries}`, sliceIdx + 1, totalSlices);
                 if (senItems.length < 25 || newInSen === 0) break;
@@ -965,9 +1035,7 @@
 
             while (cabinetHarvestedIds.size < cabinetTotalEntries && harvestedIds.size < targetLeads && !harvestAbort) {
               requestCount++;
-              if (requestCount > 1 && requestCount % 10 === 0) {
-                reportProgress('Taking anti-ban cooldown pause (40s)...', sliceIdx + 1, totalSlices);
-                await sleep(40000);
+              if (await checkAndTriggerCooldown(sliceIdx, totalSlices)) {
                 if (harvestAbort) break;
               }
 
@@ -994,10 +1062,17 @@
               });
               pacer.recordRoundTrip(Date.now() - tDrainStart);
 
-              if (drainRes.status === 429 || drainRes.status === 403) {
+              if (drainRes.status === 429) {
+                console.warn('[Apollo Extractor] 429 Rate Limit encountered. Triggering smart backoff cooldown...');
+                await executeSmartCooldown(sliceIdx, totalSlices, true);
+                if (harvestAbort) break;
+                continue;
+              }
+
+              if (drainRes.status === 403) {
                 window.postMessage({
                   type: 'APOLLO_HARVEST_HALTED',
-                  reason: drainRes.status === 429 ? 'RATE_LIMIT_429' : 'BLOCKED_403'
+                  reason: 'BLOCKED_403'
                 }, '*');
                 harvestAbort = true;
                 break;
@@ -1024,6 +1099,7 @@
                 if (isCompanies && item.id) cabinetHarvestedOrgIds.add(item.id);
               }
 
+              leadsSinceLastCooldown += newInDrain;
               processResponse(searchEndpoint, drainData);
               reportProgress(`[${bracketLabel}] Deep Drain Harvested ${cabinetHarvestedIds.size} of ${cabinetTotalEntries}`, sliceIdx + 1, totalSlices);
 

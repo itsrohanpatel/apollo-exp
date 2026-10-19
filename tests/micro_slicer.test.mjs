@@ -8,7 +8,9 @@ import {
   resolveHarvestExecutionPlan,
   resolveExecutionBrackets,
   parseApolloUrlHash,
-  buildChunkedUnionCSV
+  buildChunkedUnionCSV,
+  calculateSmartCooldownDuration,
+  shouldTriggerSmartCooldown
 } from '../extension/slicer_core.js';
 
 test('Adaptive Micro-Slicing & 100% Pool Coverage Engine', async (t) => {
@@ -165,5 +167,37 @@ test('Adaptive Micro-Slicing & 100% Pool Coverage Engine', async (t) => {
     assert.ok(fullCSV.includes("'+cmd") || fullCSV.includes("''+cmd"));
     // Newline inside company name should be converted to space
     assert.ok(fullCSV.includes('Acme Corp Inc'));
+  });
+
+  await t.test('calculateSmartCooldownDuration dynamically modulates pause duration', () => {
+    // Fast server latency (<750ms) -> 12s to 25s
+    const fastDur = calculateSmartCooldownDuration(400, false);
+    assert.ok(fastDur >= 12 && fastDur <= 25, `Fast duration ${fastDur} out of range`);
+
+    // Normal server latency (750ms - 1400ms) -> 25s to 40s
+    const normalDur = calculateSmartCooldownDuration(1000, false);
+    assert.ok(normalDur >= 25 && normalDur <= 40, `Normal duration ${normalDur} out of range`);
+
+    // Pressured server latency (>=1400ms) -> 35s to 65s
+    const pressuredDur = calculateSmartCooldownDuration(1800, false);
+    assert.ok(pressuredDur >= 35 && pressuredDur <= 65, `Pressured duration ${pressuredDur} out of range`);
+
+    // Explicit 429 rate limit signal -> 45s to 75s
+    const rateLimitDur = calculateSmartCooldownDuration(400, true);
+    assert.ok(rateLimitDur >= 45 && rateLimitDur <= 75, `Rate limit duration ${rateLimitDur} out of range`);
+  });
+
+  await t.test('shouldTriggerSmartCooldown balances request density and empty probe cabinets', () => {
+    // 429 signal immediately triggers cooldown regardless of request count
+    assert.equal(shouldTriggerSmartCooldown({ hasRateLimitSignal: true }), true);
+
+    // Active extraction (>= 20 leads found in 10 requests) -> triggers at 10 requests
+    assert.equal(shouldTriggerSmartCooldown({ requestsSinceLastCooldown: 9, leadsSinceLastCooldown: 50 }), false);
+    assert.equal(shouldTriggerSmartCooldown({ requestsSinceLastCooldown: 10, leadsSinceLastCooldown: 50 }), true);
+
+    // Empty cabinet probes (< 20 leads found in 10 requests) -> defers cooldown to 20 requests
+    assert.equal(shouldTriggerSmartCooldown({ requestsSinceLastCooldown: 10, leadsSinceLastCooldown: 0 }), false);
+    assert.equal(shouldTriggerSmartCooldown({ requestsSinceLastCooldown: 15, leadsSinceLastCooldown: 5 }), false);
+    assert.equal(shouldTriggerSmartCooldown({ requestsSinceLastCooldown: 20, leadsSinceLastCooldown: 5 }), true);
   });
 });
