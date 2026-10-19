@@ -59,11 +59,16 @@ chrome.storage.local.get(['scrapedLeads', 'scrapedCompanies', 'dailyHarvestedCou
 });
 
 function syncStorage() {
+  const allLeads = Array.from(state.leads.values());
+  const allCompanies = Array.from(state.companies.values());
+
   chrome.storage.local.set({
     leadsCount: state.leads.size,
     companiesCount: state.companies.size,
-    scrapedLeads: Array.from(state.leads.values()),
-    scrapedCompanies: Array.from(state.companies.values()),
+    previewLeads: allLeads.slice(-5).reverse(),
+    previewCompanies: allCompanies.slice(-5).reverse(),
+    scrapedLeads: allLeads,
+    scrapedCompanies: allCompanies,
     isHarvesting: state.isHarvesting,
     deepEnrichmentEnabled: state.deepEnrichmentEnabled,
     enrichmentStats: state.enrichmentStats,
@@ -615,6 +620,12 @@ function buildUnionCSV(items, preferredOrder = []) {
         val = JSON.stringify(val);
       } else {
         val = String(val);
+      }
+
+      // Collapse multiline text and escape formula injection characters
+      val = val.replace(/[\r\n]+/g, ' ').trim();
+      if (/^[=+\-@\t\r]/.test(val)) {
+        val = "'" + val;
       }
 
       if (val.includes('"') || val.includes(',') || val.includes('\n') || val.includes('\r')) {

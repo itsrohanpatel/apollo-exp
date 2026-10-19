@@ -1,51 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseCSV } from '../extension/slicer_core.js';
 
-function parseCSV(text) {
-  const rows = [];
-  let currentRow = [];
-  let currentField = '';
-  let insideQuotes = false;
+const oldPath = [
+  path.resolve('data/apollo_universal_leads_2026-10-18.csv'),
+  path.resolve('apollo_universal_leads_2026-10-18.csv')
+].find(p => fs.existsSync(p));
 
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const nextChar = text[i + 1];
+const newPath = [
+  path.resolve('data/apollo_universal_leads_2026-10-18new.csv'),
+  path.resolve('apollo_universal_leads_2026-10-18new.csv')
+].find(p => fs.existsSync(p));
 
-    if (char === '"') {
-      if (insideQuotes && nextChar === '"') {
-        currentField += '"';
-        i++;
-      } else {
-        insideQuotes = !insideQuotes;
-      }
-    } else if (char === ',' && !insideQuotes) {
-      currentRow.push(currentField);
-      currentField = '';
-    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        i++;
-      }
-      currentRow.push(currentField);
-      currentField = '';
-      if (currentRow.length > 1 || (currentRow.length === 1 && currentRow[0] !== '')) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-    } else {
-      currentField += char;
-    }
-  }
-
-  if (currentField || currentRow.length > 0) {
-    currentRow.push(currentField);
-    rows.push(currentRow);
-  }
-
-  return rows;
+if (!oldPath || !newPath) {
+  console.log('Skipping CSV comparison: required sample CSV files not found in data/.');
+  process.exit(0);
 }
-
-const oldPath = path.resolve('apollo_universal_leads_2026-10-18.csv');
-const newPath = path.resolve('apollo_universal_leads_2026-10-18new.csv');
 
 console.log('--- FILE STATS ---');
 const oldStat = fs.statSync(oldPath);

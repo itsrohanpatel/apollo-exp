@@ -12,6 +12,10 @@ npm-debug.log*
 *.csv
 data/*.csv
 data/*.json
+scripts/*.json
+scripts/last_scraped_leads.json
+*.json.gz
+
 
 # Third-party benchmark clones (embedded git repos)
 market_scrapers_and_extensions/

@@ -7,6 +7,8 @@ import {
   normalizePersonComprehensive,
   normalizeCompanyComprehensive,
   buildUnionCSV,
+  sanitizeCSVValue,
+  parseCSV,
   PREFERRED_PERSON_COLUMNS,
   PREFERRED_COMPANY_COLUMNS
 } from '../extension/slicer_core.js';
@@ -314,4 +316,28 @@ test('Comprehensive Zero-Data-Loss Normalization & Union CSV Suite', async (t) =
     assert.ok(csv.includes('"Böhm & Müller, Inc."'), 'Commas must trigger quote wrapping');
     assert.ok(csv.includes('""smart""'), 'Internal quotes must be escaped with double quotes');
   });
+
+  await t.test('sanitizeCSVValue escapes formula injection triggers (=, +, -, @, \\t, \\r)', () => {
+    assert.equal(sanitizeCSVValue('=SUM(1+1)'), "'=SUM(1+1)");
+    assert.equal(sanitizeCSVValue('+cmd|/C'), "'+cmd|/C");
+    assert.equal(sanitizeCSVValue('-1+2'), "'-1+2");
+    assert.equal(sanitizeCSVValue('@calc'), "'@calc");
+    assert.equal(sanitizeCSVValue('\talert()'), "'\talert()");
+    assert.equal(sanitizeCSVValue('Safe Value'), 'Safe Value');
+  });
+
+  await t.test('sanitizeCSVValue collapses embedded newlines into single spaces', () => {
+    const rawBio = "Line 1\r\nLine 2\nLine 3\r";
+    const cleaned = sanitizeCSVValue(rawBio);
+    assert.equal(cleaned, 'Line 1 Line 2 Line 3');
+  });
+
+  await t.test('parseCSV accurately parses quotes, commas, and escaped quotes', () => {
+    const sample = 'id,name,bio\r\n1,"Doe, John","Software ""Lead"" Engineer"';
+    const parsed = parseCSV(sample);
+    assert.equal(parsed.length, 2);
+    assert.deepEqual(parsed[0], ['id', 'name', 'bio']);
+    assert.deepEqual(parsed[1], ['1', 'Doe, John', 'Software "Lead" Engineer']);
+  });
 });
+

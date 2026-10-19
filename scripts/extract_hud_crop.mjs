@@ -4,7 +4,16 @@ import fs from 'fs';
 
 const ffmpegPath = path.resolve('node_modules/ffmpeg-static/ffmpeg.exe');
 const videoFile = path.resolve('Recording 2026-10-18 140847.mp4');
-const outDir = path.resolve('C:/Users/rohan/.gemini/antigravity-ide/brain/6abc20e9-6376-46cf-9a1d-7b20d15c9d83/scratch/frames');
+const outDir = path.resolve('scratch/frames');
+
+if (!fs.existsSync(ffmpegPath) || !fs.existsSync(videoFile)) {
+  console.log('Skipping extract_hud_crop: ffmpeg or video not found.');
+  process.exit(0);
+}
+
+if (!fs.existsSync(outDir)) {
+  fs.mkdirSync(outDir, { recursive: true });
+}
 
 const times = [440, 460, 480, 500, 520, 540, 560, 580];
 for (const sec of times) {

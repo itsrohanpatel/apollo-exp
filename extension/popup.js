@@ -43,15 +43,15 @@ document.addEventListener('DOMContentLoaded', () => {
       'isHarvesting',
       'harvestProgress',
       'circuitBreaker',
-      'scrapedLeads',
-      'scrapedCompanies',
+      'previewLeads',
+      'previewCompanies',
       'deepEnrichmentEnabled',
       'enrichmentStats'
     ], (data) => {
-      const leads = data.scrapedLeads || [];
-      const companies = data.scrapedCompanies || [];
-      const leadsCount = data.leadsCount || leads.length || 0;
-      const companiesCount = data.companiesCount || companies.length || 0;
+      const leadsCount = data.leadsCount || 0;
+      const companiesCount = data.companiesCount || 0;
+      const previewLeads = data.previewLeads || [];
+      const previewCompanies = data.previewCompanies || [];
       leadsCountEl.innerText = leadsCount.toLocaleString();
       companiesCountEl.innerText = companiesCount.toLocaleString();
 
@@ -112,10 +112,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      // Render Preview
-      if (companies.length > leads.length) {
-        const recent = companies.slice(-5).reverse();
-        previewContainer.innerHTML = recent.map(c => `
+      // Render Preview (isolated 5-item preview avoids holding multi-megabyte lead dumps in memory)
+      if (companiesCount > leadsCount && previewCompanies.length > 0) {
+        previewContainer.innerHTML = previewCompanies.map(c => `
           <div class="preview-row">
             <div class="preview-name">${escapeHTML(c.company_name || 'Unnamed Company')}</div>
             <div class="preview-details">
@@ -126,9 +125,8 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
           </div>
         `).join('');
-      } else if (leads.length > 0) {
-        const recent = leads.slice(-5).reverse();
-        previewContainer.innerHTML = recent.map(lead => {
+      } else if (previewLeads.length > 0) {
+        previewContainer.innerHTML = previewLeads.map(lead => {
           const tierColor = lead.icp_tier === 'Tier 1' ? '#4f46e5' : (lead.icp_tier === 'Tier 2' ? '#0284c7' : '#64748b');
           const tierBadge = lead.icp_score !== undefined
             ? `<span style="font-size:10px; font-weight:600; padding:1px 6px; border-radius:999px; background:${tierColor}; color:#fff; margin-left:6px;">${escapeHTML(lead.icp_tier || 'Score')}: ${lead.icp_score}</span>`

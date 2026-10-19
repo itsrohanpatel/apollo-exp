@@ -853,6 +853,79 @@ export function normalizeCompanyComprehensive(raw) {
 
 export const normalizeCompany = normalizeCompanyComprehensive;
 
+/**
+ * 13. CSV Value Sanitizer & Formula Injection Defense
+ * Collapses embedded newlines to guarantee 1 physical line per record
+ * and prefixes formula trigger characters (=, +, -, @, \t, \r) with a single quote.
+ */
+export function sanitizeCSVValue(val, options = {}) {
+  const singleLine = options.singleLine !== false;
+  const escapeFormulas = options.escapeFormulas !== false;
+
+  if (val === null || val === undefined) return '';
+  let str = typeof val === 'object' ? JSON.stringify(val) : String(val);
+
+  // 1. Formula injection protection (DDE / Excel CSV Injection):
+  if (escapeFormulas && /^[=+\-@\t\r]/.test(str)) {
+    str = "'" + str;
+  }
+
+  // 2. Single-line mode: strip outer newlines and collapse inner newlines to spaces
+  if (singleLine) {
+    str = str.replace(/^[\r\n]+|[\r\n]+$/g, '').replace(/[\r\n]+/g, ' ');
+  }
+
+  return str;
+}
+
+/**
+ * Streaming RFC 4180 CSV parser respecting quotes and multiline cells
+ */
+export function parseCSV(text) {
+  if (!text || typeof text !== 'string') return [];
+  const clean = text.replace(/^\uFEFF/, '');
+  const rows = [];
+  let currentRow = [];
+  let currentField = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < clean.length; i++) {
+    const char = clean[i];
+    const nextChar = clean[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentField += '"';
+        i++; // skip escaped quote
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentField);
+      currentField = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+      currentRow.push(currentField);
+      currentField = '';
+      if (currentRow.length > 1 || (currentRow.length === 1 && currentRow[0] !== '')) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField || currentRow.length > 0) {
+    currentRow.push(currentField);
+    rows.push(currentRow);
+  }
+
+  return rows;
+}
+
 export function buildUnionCSV(items, preferredOrder = []) {
   if (!items || items.length === 0) return '';
 
@@ -881,13 +954,7 @@ export function buildUnionCSV(items, preferredOrder = []) {
   const rows = items.map(item => {
     return headers.map(header => {
       let val = item[header];
-      if (val === null || val === undefined) {
-        val = '';
-      } else if (typeof val === 'object') {
-        val = JSON.stringify(val);
-      } else {
-        val = String(val);
-      }
+      val = sanitizeCSVValue(val, { singleLine: true, escapeFormulas: true });
 
       if (val.includes('"') || val.includes(',') || val.includes('\n') || val.includes('\r')) {
         val = `"${val.replace(/"/g, '""')}"`;
@@ -898,6 +965,7 @@ export function buildUnionCSV(items, preferredOrder = []) {
 
   return '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
 }
+
 
 // 14. Bidirectional People -> Company Enrichment Merger
 export function mergeEnrichedCompanyToPerson(person, enrichedOrg) {

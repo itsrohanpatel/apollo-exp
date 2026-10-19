@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Apollo Universal Lead Harvester",
-  "version": "2.0.0",
+  "version": "2.1.1",
   "description": "Zero-credit, anti-ban 10,000+ lead harvester with continuous headcount partitioning and instant CSV exporter",
   "icons": {
     "16": "icons/icon16.png",
@@ -10,6 +10,7 @@
   },
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "activeTab",
     "downloads"
   ],
