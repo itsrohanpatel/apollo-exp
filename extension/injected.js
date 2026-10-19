@@ -98,6 +98,80 @@
     return [...UNIVERSAL_HEADCOUNT_BRACKETS];
   }
 
+  function isHighDensityBracket(bracket) {
+    if (!bracket || !bracket[0]) return false;
+    const str = bracket[0];
+    if (str === '10001') return false;
+    const parts = str.split(',').map(Number);
+    if (parts.length !== 2) return false;
+    const [min, max] = parts;
+    if (min === max) return false;
+    return max <= 500;
+  }
+
+  function decomposeHighDensityBracket(rangeStr) {
+    const parts = rangeStr.split(',').map(Number);
+    if (parts.length !== 2) return [[rangeStr]];
+    const [min, max] = parts;
+    if (min === max) return [[`${min},${min}`]];
+    if (min >= 1 && max <= 10) {
+      const steps = [];
+      for (let i = min; i <= max; i++) steps.push([`${i},${i}`]);
+      return steps;
+    }
+    if (min >= 11 && max <= 20) {
+      const steps = [];
+      for (let i = min; i <= max; i += 2) {
+        const next = Math.min(i + 1, max);
+        steps.push([`${i},${next}`]);
+      }
+      return steps;
+    }
+    if (min >= 21 && max <= 50) {
+      const steps = [];
+      let cur = min;
+      while (cur <= max) {
+        const next = Math.min(cur + 4, max);
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+      return steps;
+    }
+    if (min >= 51 && max <= 100) {
+      const steps = [];
+      let cur = min;
+      while (cur <= max) {
+        const next = Math.min(cur + 9, max);
+        steps.push([`${cur},${next}`]);
+        cur = next + 1;
+      }
+      return steps;
+    }
+    if (min >= 101 && max <= 200) {
+      return [['101,150'], ['151,200']];
+    }
+    if (min >= 201 && max <= 500) {
+      return [['201,350'], ['351,500']];
+    }
+    return [[`${min},${max}`]];
+  }
+
+  function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,') {
+    const macroBrackets = expandOpenHeadcountRange(openRangeLowerStr).map(b => b[0]);
+    const microBrackets = [];
+    for (const macro of macroBrackets) {
+      if (macro === '10001') {
+        microBrackets.push(['10001']);
+      } else if (isHighDensityBracket([macro])) {
+        const subSlices = decomposeHighDensityBracket(macro);
+        microBrackets.push(...subSlices);
+      } else {
+        microBrackets.push([macro]);
+      }
+    }
+    return microBrackets;
+  }
+
   let latestSearchPayload = null;
   let isHarvestingActive = false;
   let harvestAbort = false;
@@ -633,6 +707,9 @@
             organization_ids_excluded: Array.from(harvestedOrgIds),
             excluded_organization_ids: Array.from(harvestedOrgIds)
           };
+          if (urlFilters.organization_num_employees_ranges) {
+            payload.organization_num_employees_ranges = urlFilters.organization_num_employees_ranges;
+          }
           if (!isCompanies) {
             payload.person_ids_excluded = Array.from(harvestedIds);
           }
@@ -758,7 +835,11 @@
       } else {
         // Method C: UNIVERSAL INFINITE DRAIN (DEFAULT - Extracts 100% of all matching leads)
         // Combines continuous headcount partitioning with cabinet-scoped dynamic exclusion
-        const brackets = granular ? GRANULAR_HEADCOUNT_BRACKETS : resolveExecutionBrackets(urlFilters);
+        const brackets = granular
+          ? (urlFilters.organization_num_employees_ranges
+              ? generateAdaptiveMicroBrackets(urlFilters.organization_num_employees_ranges[0])
+              : GRANULAR_HEADCOUNT_BRACKETS)
+          : resolveExecutionBrackets(urlFilters);
         const totalSlices = brackets.length;
 
         for (let sliceIdx = 0; sliceIdx < totalSlices; sliceIdx++) {
