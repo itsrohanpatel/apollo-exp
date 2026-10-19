@@ -23,26 +23,33 @@ All reverse-engineering analysis, official documentation, architectural designs,
 
 ---
 
-## ⚡ Chrome Extension V2.1.0 Features
+## ⚡ Chrome Extension V2.2.0 Features (Production-Ready)
 
 - **Universal 10,000+ Deep Harvest Engine:** Autonomously harvests beyond the 5-page ceiling on **any arbitrary search query** without altering your keywords, locations, or titles.
-- **Continuous Mathematical Headcount Partitioning:** Partitions searches across contiguous employee brackets (`1,10`, `11,20`, ..., `10001+` and micro-ranges like `50,50`, `51,60`, `100,105`) so that every sub-query stays under 125 leads.
-- **High-Density Cascades (>250 Leads):** Automatically triggers secondary cascades across Email Status (`verified`, `guessed`, `unavailable`), Seniority, and Departments when enterprise brackets exceed 250 leads.
+- **Smart Adaptive Cooldown Pacer:**
+  - **Latency-Linked Scaling:** Modulates pause durations based on live server round-trip latency (15s–20s when Apollo is fast, 30s–38s normal, 50s–60s under server pressure).
+  - **Empty-Cabinet Probe Awareness:** Defers cooldown pauses up to 20 requests when probing sparse/empty cabinets (0 leads found), eliminating unnecessary idle stalls.
+  - **Live HUD & Popup Countdown:** Real-time second-by-second countdown timer (`Anti-ban cooldown: 18s remaining...`) with instant 200ms abortability.
+  - **HTTP 429 Auto-Recovery Backoff:** Automatically handles Apollo burst throttles by initiating an intelligent 60s–75s backoff window and seamlessly retrying the slice.
+- **Arbitrary Continuous Headcount Partitioning:**
+  - Segments **any arbitrary user range** (e.g. `50,200`, `10,50`, `50,`, `50+`, `10001+`) into micro-cabinets under 125 leads.
+  - Full support for multi-range search payloads and bracketless URL query formats.
+- **Bidirectional Slicing + Enterprise Seniority Pivot:**
+  - Automatically executes Top-Down (descending) and Bottom-Up (ascending) passes for cabinets with >125 records.
+  - Automatically cascades across seniority tiers (`founder`, `c_suite`, `partner`, `vp`, `director`, etc.) for indivisible enterprise brackets (`10001+`).
 - **2-Tier Floating HUD Layout:**
   - **Global Bar:** Top row strictly isolates total harvested items (`Total Leads: 1,701`) in monospace cyan font.
-  - **Activity Subpanel:** Bottom row displays active bracket progress (`Bracket [2001,5000] (Slice 8/14) - Bottom-up 150 of 196 in cabinet`).
-  - **Live Cooldown Countdown:** Real-time second-by-second countdown (`Anti-ban safety pause: 38s remaining...`).
-  - **Race-Condition Locked:** Prevents background storage synchronization from overwriting live progress counters.
+  - **Activity Subpanel:** Bottom row displays active bracket progress (`Bracket [2001,5000] [Slice 8/14] - Bottom-up 150 of 196 leads`).
+  - **Dynamic State Coloring:** Glowing amber during active extraction, soothing blue during smart cooldown, and emerald green when ready.
 - **Single-Line CSV Sanitization & Security Protection:**
-  - Embedded newlines (`\n`, `\r\n`) in company descriptions are sanitized to single spaces, guaranteeing **strictly 1 physical CSV line per record**.
-  - Formula injection characters (`=`, `+`, `-`, `@`, `\t`, `\r`) are automatically escaped with single quotes (`'`).
+  - Embedded newlines (`\n`, `\r\n`) in company descriptions and notes are flattened to single spaces, guaranteeing **strictly 1 physical CSV line per record**.
+  - Formula injection triggers (`=`, `+`, `-`, `@`, `\t`, `\r`) are automatically escaped with leading single quotes (`'`).
 - **100% Anti-Ban Protection (Zero Account Risk):**
   - **Human Pacing Jitter:** Randomized delay between 2,000ms and 3,800ms between requests.
-  - **Batch Rest Pauses:** Automatic 40-second cool-down after every 250 leads (~10 requests) to evade Cloudflare Turnstile token refresh flags.
-  - **Instant Circuit Breaker:** Stops execution immediately if Apollo returns HTTP 429 or 403, preserving all scraped data.
+  - **Instant Circuit Breaker:** Stops execution immediately if Apollo returns HTTP 403, preserving all scraped data.
   - **Daily Volume Safety Governor:** Visual indicator warns when approaching 2,500 leads/day/account.
 - **Zero Export Credit Consumption:** Pure client-side streaming Blob download—Apollo server export credits are never touched.
-- **TDD Test Suite:** Verified with 79 native Node.js tests across 12 test suites (`npm test`).
+- **Comprehensive TDD Test Suite:** Verified with **75 native Node.js tests** across 15 test suites (`npm test`).
 
 ---
 
