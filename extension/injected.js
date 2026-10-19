@@ -37,7 +37,66 @@
     ['201,250'], ['251,300'], ['301,400'], ['401,500'],
     ['501,600'], ['601,750'], ['751,1000'],
     ['1001,2000'], ['2001,5000'], ['5001,10000'], ['10001']
+  const STANDARD_MACRO_INTERVALS = [
+    { min: 1, max: 10, label: '1,10' },
+    { min: 11, max: 20, label: '11,20' },
+    { min: 21, max: 50, label: '21,50' },
+    { min: 51, max: 100, label: '51,100' },
+    { min: 101, max: 200, label: '101,200' },
+    { min: 201, max: 500, label: '201,500' },
+    { min: 501, max: 1000, label: '501,1000' },
+    { min: 1001, max: 5000, label: '1001,5000' },
+    { min: 5001, max: 10000, label: '5001,10000' },
+    { min: 10001, max: Infinity, label: '10001' }
   ];
+
+  function expandOpenHeadcountRange(openRangeStr = '1,') {
+    if (typeof openRangeStr !== 'string') return [['10001']];
+    const trimmed = openRangeStr.trim();
+
+    if (trimmed.endsWith(',')) {
+      const lower = parseInt(trimmed.replace(',', ''), 10) || 1;
+      const brackets = [];
+      for (const interval of STANDARD_MACRO_INTERVALS) {
+        if (interval.max < lower) continue;
+        if (interval.max === Infinity) {
+          brackets.push(['10001']);
+        } else if (lower >= interval.min && lower <= interval.max) {
+          brackets.push([`${lower},${interval.max}`]);
+        } else if (interval.min > lower) {
+          brackets.push([`${interval.min},${interval.max}`]);
+        }
+      }
+      return brackets.length > 0 ? brackets : [['10001']];
+    }
+
+    if (trimmed.startsWith(',')) {
+      const upper = parseInt(trimmed.replace(',', ''), 10) || 10000;
+      const brackets = [];
+      for (const interval of STANDARD_MACRO_INTERVALS) {
+        if (interval.min > upper) continue;
+        if (interval.max <= upper) {
+          brackets.push([interval.label]);
+        } else if (interval.min <= upper && interval.max > upper) {
+          brackets.push([`${interval.min},${upper}`]);
+        }
+      }
+      return brackets.length > 0 ? brackets : [['1,10']];
+    }
+
+    return [[trimmed]];
+  }
+
+  function resolveExecutionBrackets(basePayload = {}) {
+    const customRanges = basePayload.organization_num_employees_ranges;
+    if (Array.isArray(customRanges) && customRanges.length > 0) {
+      if (customRanges.length === 1 && typeof customRanges[0] === 'string' && (customRanges[0].endsWith(',') || customRanges[0].startsWith(','))) {
+        return expandOpenHeadcountRange(customRanges[0]);
+      }
+      return customRanges.map(r => Array.isArray(r) ? r : [r]);
+    }
+    return [...UNIVERSAL_HEADCOUNT_BRACKETS];
+  }
 
   let latestSearchPayload = null;
   let isHarvestingActive = false;
@@ -690,7 +749,7 @@
             processResponse(searchEndpoint, data);
             reportProgress(`Harvesting [${bracket[0]}] Page ${page}`, sliceIdx + 1, totalSlices);
 
-            if (people.length < 25) break;
+            if (items.length < 25) break;
 
             await sleep(pacer.computeNextDelay());
           }
