@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Apollo Universal Lead Harvester</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-box">
+        <div class="pulse-indicator" id="statusIndicator"></div>
+        <div>
+          <h1 class="title">Apollo Harvester</h1>
+          <p class="subtitle" id="statusText">Anti-Ban Engine Ready</p>
+        </div>
+      </div>
+      <div class="badge-tag">10K+ V2</div>
+    </header>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-label">Leads Harvested</span>
+        <span class="stat-value" id="leadsCount">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Companies</span>
+        <span class="stat-value" id="companiesCount">0</span>
+      </div>
+    </div>
+
+    <!-- Live Progress Bar (Visible while harvesting) -->
+    <div class="progress-section" id="progressSection" style="display: none;">
+      <div class="progress-header">
+        <span class="progress-label" id="progressSliceLabel">Slice 1 of 10</span>
+        <span class="progress-percent" id="progressPercent">0%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+      </div>
+      <div class="progress-subtext" id="progressSubtext">Safe pacing: 2.4s jitter</div>
+    </div>
+
+    <!-- Harvest Engine Configuration -->
+    <div class="section-card">
+      <div class="section-title">Harvest Configuration</div>
+      
+      <!-- Target Leads -->
+      <div class="control-row">
+        <label for="targetLeadsInput">Target Leads:</label>
+        <div class="target-input-wrap">
+          <input type="number" id="targetLeadsInput" min="25" max="50000" step="25" value="50000" class="num-input">
+        </div>
+      </div>
+
+      <!-- Quick Preset Pills -->
+      <div class="pill-group">
+        <button class="pill-btn" data-value="500">500</button>
+        <button class="pill-btn" data-value="1000">1,000</button>
+        <button class="pill-btn" data-value="2500">2,500</button>
+        <button class="pill-btn" data-value="5000">5,000</button>
+        <button class="pill-btn active" data-value="50000" id="pillAll">🌟 ALL</button>
+      </div>
+
+      <!-- Strategy Mode Selector -->
+      <div class="control-row" style="margin-top: 10px;">
+        <label for="strategySelect">Engine Mode:</label>
+        <select id="strategySelect" class="select-input">
+          <option value="infinite_drain" selected>🚀 Universal Infinite Drain (Harvest 100% - Default)</option>
+          <option value="headcount_matrix">Standard Headcount Partitioning (Pages 1-5)</option>
+          <option value="dynamic_exclusion">Page-1 Dynamic ID Exclusion (Single Cabinet)</option>
+          <option value="granular_headcount">Deep Micro-Slicing (High Density)</option>
+        </select>
+      </div>
+
+      <!-- Deep Org Enrichment Toggle -->
+      <div class="control-row" style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <label for="deepEnrichmentToggle" style="font-weight: 600; cursor: pointer; color: #e2e8f0;">⚡ Deep Org Enrichment</label>
+          <div style="font-size: 11px; color: #94a3b8;">Tech Stack (120+ tools), Funding & Revenue</div>
+        </div>
+        <input type="checkbox" id="deepEnrichmentToggle" checked style="cursor: pointer; width: 16px; height: 16px;">
+      </div>
+      <div id="enrichmentStatusRow" style="font-size: 11px; color: #38bdf8; margin-top: 4px; display: none;">
+        ⚡ Enriching Orgs: <span id="enrichmentPendingCount">0</span> queued, <span id="enrichmentEnrichedCount">0</span> enriched
+      </div>
+
+      <!-- Anti-Ban Safety Indicator -->
+      <div class="safety-banner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        <span>Anti-Ban: 2.0s–3.8s Jitter + 45s Batch Cooldowns Active</span>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-buttons">
+        <button id="btnStartHarvest" class="btn btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          Start Deep Harvest
+        </button>
+        <button id="btnStopHarvest" class="btn btn-danger" style="display: none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"></rect></svg>
+          Stop Harvest
+        </button>
+      </div>
+    </div>
+
+    <!-- Export Clean Data (0 Credits) -->
+    <div class="section-card">
+      <div class="section-title">Client-Side Export (0 Credits)</div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="export-grid">
+          <button id="btnExportCSV" class="btn btn-success" title="Export all captured leads">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Leads CSV
+          </button>
+          <button id="btnExportCompanyCSV" class="btn btn-primary" title="Export all captured companies">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Companies CSV
+          </button>
+        </div>
+        <div class="export-grid">
+          <button id="btnExportJSON" class="btn btn-secondary" style="font-size: 11px;">
+            Leads JSON
+          </button>
+          <button id="btnExportCompanyJSON" class="btn btn-secondary" style="font-size: 11px;">
+            Companies JSON
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Preview -->
+    <div class="section-card">
+      <div class="preview-header">
+        <span class="section-title" style="margin-bottom: 0;">Live Preview</span>
+        <button id="btnClear" class="btn-text">Clear All</button>
+      </div>
+      <div class="preview-container" id="previewContainer">
+        <div class="empty-state">No leads captured yet. Set filters on Apollo and click "Start Deep Harvest"!</div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>ECC Lead Intelligence • Pure Client-Side MV3</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

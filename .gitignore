@@ -1,0 +1,32 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Media and screen recordings (750MB+)
+*.mp4
+*.mkv
+*.mov
+*.avi
+
+# Scraped Data Dumps & CSV Exports
+*.csv
+data/*.csv
+data/*.json
+
+# Third-party benchmark clones (embedded git repos)
+market_scrapers_and_extensions/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cache & Build
+graphify-out/cache/
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+

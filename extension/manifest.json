@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Apollo Universal Lead Harvester",
+  "version": "2.0.0",
+  "description": "Zero-credit, anti-ban 10,000+ lead harvester with continuous headcount partitioning and instant CSV exporter",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://app.apollo.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.apollo.io/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js", "slicer_core.js"],
+      "matches": ["https://app.apollo.io/*"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Apollo Universal Harvester"
+  }
+}
