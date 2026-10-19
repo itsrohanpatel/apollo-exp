@@ -239,9 +239,13 @@
     }
   }
 
-  function getApolloHeaders() {
+  function getApolloHeaders(isCompanies = null) {
+    const isComp = isCompanies !== null ? isCompanies : (window.location.hash || window.location.href).includes('/companies');
     const headers = {
-      'Content-Type': 'application/json',
+      'content-type': 'application/json',
+      'x-referer-host': 'app.apollo.io',
+      'x-referer-path': isComp ? '/companies' : '/people',
+      'x-accept-language': 'en',
       'X-Requested-With': 'XMLHttpRequest'
     };
     const csrf = getCookie('X-CSRF-TOKEN');
