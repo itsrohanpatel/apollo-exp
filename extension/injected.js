@@ -1368,6 +1368,7 @@
           const unit = planUnits[sliceIdx];
           const unitLabel = unit.label;
           let unitTotalEntries = null;
+          let unitHarvestedCount = 0;
 
           reportProgress(`Scanning [${unitLabel}] (${sliceIdx + 1}/${totalSlices})...`, sliceIdx + 1, totalSlices, null, 0, null, unitLabel);
 
@@ -1465,6 +1466,7 @@
                 if (id && !harvestedIds.has(id)) {
                   harvestedIds.add(id);
                   newInPage++;
+                  unitHarvestedCount++;
                 }
                 if (item.organization_id) harvestedOrgIds.add(item.organization_id);
                 if (item.organization?.id) harvestedOrgIds.add(item.organization.id);
@@ -1475,8 +1477,7 @@
               trackItemQuality(items);
               processResponse(searchEndpoint, data);
 
-              const totalStr = unitTotalEntries !== null ? ` of ${unitTotalEntries}` : '';
-              reportProgress(`[${unitLabel}] ${sortLabel} p${page} Harvested ${harvestedIds.size}${totalStr}`, sliceIdx + 1, totalSlices, null, newInPage, unitTotalEntries, unitLabel);
+              reportProgress(`[${unitLabel}] ${sortLabel} p${page} (+${unitHarvestedCount}/${unitTotalEntries || '?'}) | Total: ${harvestedIds.size}`, sliceIdx + 1, totalSlices, null, unitHarvestedCount, unitTotalEntries, unitLabel);
 
               if (items.length < 25 || newInPage === 0) break;
 
