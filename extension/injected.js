@@ -1262,6 +1262,8 @@
           }
         }
 
+      } else {
+        // Method C: ADAPTIVE DYNAMIC CABIN ENGINE (DEFAULT - 100% extraction with minimal API calls)
         reportProgress('⚡ Analyzing Search Density & Planning Optimal Cabinets...', 0, 0);
 
         // Fast probe function via active Apollo authenticated session
