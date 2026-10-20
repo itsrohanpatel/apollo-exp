@@ -373,7 +373,7 @@ export function resolveHarvestExecutionPlan(basePayload = {}) {
 }
 
 // 9b. Micro-Bracket Execution Plan Resolver (Decomposes macro brackets into adaptive micro-cabinets)
-export function resolveExecutionBrackets(basePayload = {}) {
+export function resolveExecutionBrackets(basePayload = {}, options = {}) {
   const customRanges = basePayload.organization_num_employees_ranges;
   if (Array.isArray(customRanges) && customRanges.length > 0) {
     const out = [];
@@ -386,13 +386,13 @@ export function resolveExecutionBrackets(basePayload = {}) {
           if (macro === '10001') {
             out.push(['10001']);
           } else if (isHighDensityBracket([macro])) {
-            out.push(...decomposeHighDensityBracket(macro));
+            out.push(...decomposeHighDensityBracket(macro, options));
           } else {
             out.push([macro]);
           }
         }
       } else if (typeof str === 'string' && isHighDensityBracket([str])) {
-        out.push(...decomposeHighDensityBracket(str));
+        out.push(...decomposeHighDensityBracket(str, options));
       } else {
         out.push(Array.isArray(r) ? r : [r]);
       }
@@ -405,7 +405,7 @@ export function resolveExecutionBrackets(basePayload = {}) {
     if (macro === '10001') {
       universal.push(['10001']);
     } else if (isHighDensityBracket([macro])) {
-      universal.push(...decomposeHighDensityBracket(macro));
+      universal.push(...decomposeHighDensityBracket(macro, options));
     } else {
       universal.push([macro]);
     }
@@ -505,7 +505,7 @@ export function isHighDensityBracket(bracket) {
 }
 
 // 15. Decompose High-Density Bracket into Sub-250 Micro-Ranges
-export function decomposeHighDensityBracket(bracketStr) {
+export function decomposeHighDensityBracket(bracketStr, options = {}) {
   if (typeof bracketStr !== 'string') return [[bracketStr]];
   const parts = bracketStr.split(',').map(s => parseInt(s.trim(), 10));
   if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) {
@@ -517,6 +517,7 @@ export function decomposeHighDensityBracket(bracketStr) {
     return [[`${min},${max}`]];
   }
 
+  const isGranular = options.granular === true;
   const steps = [];
   let cur = min;
 
@@ -536,54 +537,92 @@ export function decomposeHighDensityBracket(bracketStr) {
       }
     } else if (cur <= 100) {
       const segEnd = Math.min(100, max);
+      const stepSize = isGranular ? 4 : 9; // Granular: steps of 5 (e.g. 51-55), default: steps of 10
       while (cur <= segEnd) {
-        const next = Math.min(cur + 9, segEnd);
+        const next = Math.min(cur + stepSize, segEnd);
         steps.push([`${cur},${next}`]);
         cur = next + 1;
       }
     } else if (cur <= 200) {
       const segEnd = Math.min(200, max);
-      while (cur <= segEnd) {
-        let next;
-        if (cur <= 150) next = Math.min(150, segEnd);
-        else next = segEnd;
-        steps.push([`${cur},${next}`]);
-        cur = next + 1;
+      if (isGranular) {
+        // Granular: steps of 10 (101-110, 111-120 ... 191-200)
+        while (cur <= segEnd) {
+          const next = Math.min(cur + 9, segEnd);
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else {
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 150) next = Math.min(150, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
       }
     } else if (cur <= 500) {
       const segEnd = Math.min(500, max);
+      const stepSize = isGranular ? 24 : 49; // Granular: steps of 25 (e.g. 201-225), default: steps of 50
       while (cur <= segEnd) {
-        const next = Math.min(cur + 49, segEnd);
+        const next = Math.min(cur + stepSize, segEnd);
         steps.push([`${cur},${next}`]);
         cur = next + 1;
       }
     } else if (cur <= 1000) {
       const segEnd = Math.min(1000, max);
-      while (cur <= segEnd) {
-        let next;
-        if (cur <= 750) next = Math.min(750, segEnd);
-        else next = segEnd;
-        steps.push([`${cur},${next}`]);
-        cur = next + 1;
+      if (isGranular) {
+        // Granular: steps of 50 (501-550, 551-600 ... 951-1000)
+        while (cur <= segEnd) {
+          const next = Math.min(cur + 49, segEnd);
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else {
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 750) next = Math.min(750, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
       }
     } else if (cur <= 5000) {
       const segEnd = Math.min(5000, max);
-      while (cur <= segEnd) {
-        let next;
-        if (cur <= 2000) next = Math.min(2000, segEnd);
-        else if (cur <= 3500) next = Math.min(3500, segEnd);
-        else next = segEnd;
-        steps.push([`${cur},${next}`]);
-        cur = next + 1;
+      if (isGranular) {
+        // Granular: steps of 250
+        while (cur <= segEnd) {
+          const next = Math.min(cur + 249, segEnd);
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else {
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 2000) next = Math.min(2000, segEnd);
+          else if (cur <= 3500) next = Math.min(3500, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
       }
     } else if (cur <= 10000) {
       const segEnd = Math.min(10000, max);
-      while (cur <= segEnd) {
-        let next;
-        if (cur <= 7500) next = Math.min(7500, segEnd);
-        else next = segEnd;
-        steps.push([`${cur},${next}`]);
-        cur = next + 1;
+      if (isGranular) {
+        // Granular: steps of 500
+        while (cur <= segEnd) {
+          const next = Math.min(cur + 499, segEnd);
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
+      } else {
+        while (cur <= segEnd) {
+          let next;
+          if (cur <= 7500) next = Math.min(7500, segEnd);
+          else next = segEnd;
+          steps.push([`${cur},${next}`]);
+          cur = next + 1;
+        }
       }
     } else {
       steps.push(['10001']);
@@ -595,7 +634,7 @@ export function decomposeHighDensityBracket(bracketStr) {
 }
 
 // 16. Generate Complete Adaptive Micro-Brackets for Open Range or Universal Set
-export function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,') {
+export function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,', options = {}) {
   const macroBrackets = expandOpenHeadcountRange(openRangeLowerStr).map(b => b[0]);
 
   const microBrackets = [];
@@ -603,7 +642,7 @@ export function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,') {
     if (macro === '10001') {
       microBrackets.push(['10001']);
     } else if (isHighDensityBracket([macro])) {
-      const subSlices = decomposeHighDensityBracket(macro);
+      const subSlices = decomposeHighDensityBracket(macro, options);
       microBrackets.push(...subSlices);
     } else {
       microBrackets.push([macro]);
@@ -611,6 +650,36 @@ export function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,') {
   }
 
   return microBrackets;
+}
+
+// 16b. Seniority Facet Filtering & Dense Cabinet Pivot Helpers
+export const DEFAULT_SECONDARY_SENIORITIES = [
+  'owner',
+  'founder',
+  'c_suite',
+  'partner',
+  'vp',
+  'head',
+  'director',
+  'manager',
+  'senior',
+  'entry',
+  'intern'
+];
+
+export function filterActiveSeniorityFacets(rawFacets) {
+  if (!Array.isArray(rawFacets)) return [...DEFAULT_SECONDARY_SENIORITIES];
+  return rawFacets
+    .filter(f => f && typeof f === 'object' && f.value && (f.count === undefined || f.count > 0))
+    .map(f => f.value);
+}
+
+export function resolveDenseCabinetSeniorityPivots(rawFacets) {
+  if (Array.isArray(rawFacets) && rawFacets.length > 0) {
+    const active = filterActiveSeniorityFacets(rawFacets);
+    if (active.length > 0) return active;
+  }
+  return [...DEFAULT_SECONDARY_SENIORITIES];
 }
 
 // 17. SmartBatcher: Autonomous Adaptive Cabinet Sizer
@@ -708,6 +777,16 @@ export class SmartBatcher {
   }
 
   /**
+   * Autonomous pre-flight density resolver for 100% lead coverage with minimal API calls
+   */
+  async resolveAdaptiveTree(basePayload = {}, options = {}) {
+    return resolveAdaptiveExecutionTree(this.probeFn, basePayload, {
+      maxLeadsPerCabinet: this.maxLimit,
+      ...options
+    });
+  }
+
+  /**
    * Static Offline Coalescence (Greedy Bin-Packing):
    * Groups adjacent known micro-brackets into optimal combined ranges <= maxLimit
    */
@@ -741,6 +820,263 @@ export class SmartBatcher {
     }
 
     return coalesced;
+  }
+}
+
+/**
+ * Coalesce Sparse Ranges (Standalone Function)
+ * Optimal bin-packing of adjacent contiguous micro-ranges into <= maxLimit cabinets
+ */
+export function coalesceSparseRanges(knownDensityMap = [], maxLimit = 245) {
+  const coalesced = [];
+  let currentGroup = null;
+
+  for (const item of knownDensityMap) {
+    if (!item || item.total === 0) continue;
+
+    if (!currentGroup) {
+      currentGroup = { min: item.min, max: item.max, total: item.total };
+    } else if (currentGroup.total + item.total <= maxLimit && currentGroup.max + 1 === item.min) {
+      currentGroup.max = item.max;
+      currentGroup.total += item.total;
+    } else {
+      coalesced.push({
+        bracket: [`${currentGroup.min},${currentGroup.max}`],
+        min: currentGroup.min,
+        max: currentGroup.max,
+        total: currentGroup.total
+      });
+      currentGroup = { min: item.min, max: item.max, total: item.total };
+    }
+  }
+
+  if (currentGroup) {
+    coalesced.push({
+      bracket: [`${currentGroup.min},${currentGroup.max}`],
+      min: currentGroup.min,
+      max: currentGroup.max,
+      total: currentGroup.total
+    });
+  }
+
+  return coalesced;
+}
+
+/**
+ * Dynamic Pre-Flight Bisection Tree
+ * Recursively probes density and partitions search space into <= 245 lead cabinets.
+ * For dense ranges (> 245), completely skips broad sweeps and generates disjoint seniority partitions.
+ */
+export class DynamicBisectionTree {
+  constructor(options = {}) {
+    this.maxLimit = options.maxLeadsPerCabinet || 245;
+    this.maxDepth = options.maxDepth || 10;
+    this.probeFn = options.probeFn || null;
+    this.seniorities = options.seniorities || [
+      'founder',
+      'c_suite',
+      'vp',
+      'director',
+      'manager',
+      'senior',
+      'entry'
+    ];
+    this.cache = new Map();
+  }
+
+  async probe(min, max, extraPayload = {}) {
+    const rangeStr = min === max ? `${min},${min}` : `${min},${max}`;
+    if (this.cache.has(rangeStr)) {
+      return this.cache.get(rangeStr);
+    }
+    if (!this.probeFn) {
+      throw new Error('probeFn required for DynamicBisectionTree');
+    }
+    const result = await this.probeFn(rangeStr, extraPayload);
+    const total = typeof result === 'object' && result !== null && typeof result.total === 'number'
+      ? result.total
+      : Number(result) || 0;
+    this.cache.set(rangeStr, total);
+    return total;
+  }
+
+  async bisect(min, max, currentDepth = 0) {
+    const total = await this.probe(min, max);
+
+    if (total === 0) {
+      return [];
+    }
+
+    if (total <= this.maxLimit) {
+      return [{
+        type: 'HEADCOUNT',
+        min,
+        max,
+        total,
+        bracket: [`${min},${max}`],
+        action: 'EXECUTE_BIDIRECTIONAL',
+        skipBroadSweep: false,
+        pagesNeeded: Math.ceil(total / 25)
+      }];
+    }
+
+    // Dense: total > maxLimit
+    if (min < max && currentDepth < this.maxDepth) {
+      const mid = Math.floor((min + max) / 2);
+      const left = await this.bisect(min, mid, currentDepth + 1);
+      const right = await this.bisect(mid + 1, max, currentDepth + 1);
+      return [...left, ...right];
+    }
+
+    // Cannot bisect headcount further (min === max or maxDepth reached)
+    // ZERO-REDUNDANCY FRESH-LEAD ARCHITECTURE:
+    // Skip broad sweep entirely! Generate disjoint seniority partitions.
+    return this.seniorities.map(s => ({
+      type: 'SENIORITY',
+      min,
+      max,
+      bracket: [`${min},${max}`],
+      seniority: [s],
+      total,
+      action: 'EXECUTE_SENIORITY',
+      skipBroadSweep: true
+    }));
+  }
+
+  async buildExecutionPlan(initialRanges = []) {
+    const plan = [];
+    const parsedRanges = initialRanges.map(r => {
+      if (typeof r === 'string') {
+        const parts = r.split(',').map(n => parseInt(n.trim(), 10));
+        return [parts[0], parts[1] || parts[0]];
+      }
+      if (Array.isArray(r)) {
+        if (typeof r[0] === 'string' && r[0].includes(',')) {
+          const parts = r[0].split(',').map(n => parseInt(n.trim(), 10));
+          return [parts[0], parts[1] || parts[0]];
+        }
+        return [r[0], r[1] !== undefined ? r[1] : r[0]];
+      }
+      return [1, 10];
+    });
+
+    for (const [min, max] of parsedRanges) {
+      const slices = await this.bisect(min, max, 0);
+      plan.push(...slices);
+    }
+
+    return plan;
+  }
+}
+
+/**
+ * Harvest Manifest: Crash-Resistant State Machine & Resumable Checkpoint Engine
+ */
+export class HarvestManifest {
+  constructor(options = {}) {
+    this.jobId = null;
+    this.searchParams = {};
+    this.slices = [];
+    this.status = 'IDLE'; // IDLE, PENDING, IN_PROGRESS, COMPLETED, FAILED
+    this.createdAt = null;
+    this.updatedAt = null;
+  }
+
+  create(jobId, searchParams = {}, plan = []) {
+    this.jobId = jobId || `job_${Date.now()}`;
+    this.searchParams = { ...searchParams };
+    this.slices = plan.map((slice, index) => ({
+      id: slice.id || `slice_${index + 1}`,
+      type: slice.type || 'HEADCOUNT',
+      bracket: slice.bracket || [],
+      seniority: slice.seniority || null,
+      total: slice.total || 0,
+      skipBroadSweep: slice.skipBroadSweep || false,
+      status: 'PENDING', // PENDING, IN_PROGRESS, COMPLETED, FAILED, SKIPPED
+      harvested: 0,
+      netFresh: 0,
+      duplicates: 0,
+      error: null
+    }));
+    this.status = 'PENDING';
+    this.createdAt = new Date().toISOString();
+    this.updatedAt = this.createdAt;
+    return this;
+  }
+
+  updateSlice(sliceId, updates = {}) {
+    const slice = this.slices.find(s => s.id === sliceId);
+    if (!slice) return false;
+
+    Object.assign(slice, updates);
+    this.updatedAt = new Date().toISOString();
+
+    if (this.slices.some(s => s.status === 'IN_PROGRESS')) {
+      this.status = 'IN_PROGRESS';
+    }
+
+    if (this.isComplete()) {
+      this.status = 'COMPLETED';
+    }
+
+    return true;
+  }
+
+  getPendingSlices() {
+    return this.slices.filter(s => s.status === 'PENDING' || s.status === 'FAILED');
+  }
+
+  isComplete() {
+    return this.slices.length > 0 && this.slices.every(s => s.status === 'COMPLETED' || s.status === 'SKIPPED');
+  }
+
+  getProgress() {
+    const totalSlices = this.slices.length;
+    const completedSlices = this.slices.filter(s => s.status === 'COMPLETED' || s.status === 'SKIPPED').length;
+    let netFreshTotal = 0;
+    let duplicatesTotal = 0;
+    let harvestedTotal = 0;
+
+    for (const slice of this.slices) {
+      netFreshTotal += slice.netFresh || 0;
+      duplicatesTotal += slice.duplicates || 0;
+      harvestedTotal += slice.harvested || 0;
+    }
+
+    const percentComplete = totalSlices > 0 ? Math.round((completedSlices / totalSlices) * 100) : 0;
+
+    return {
+      totalSlices,
+      completedSlices,
+      harvestedTotal,
+      netFreshTotal,
+      duplicatesTotal,
+      percentComplete
+    };
+  }
+
+  serialize() {
+    return JSON.stringify({
+      jobId: this.jobId,
+      searchParams: this.searchParams,
+      slices: this.slices,
+      status: this.status,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt
+    });
+  }
+
+  deserialize(data) {
+    const obj = typeof data === 'string' ? JSON.parse(data) : data;
+    if (!obj || typeof obj !== 'object') return false;
+
+    this.jobId = obj.jobId || null;
+    this.searchParams = obj.searchParams || {};
+    this.slices = Array.isArray(obj.slices) ? obj.slices : [];
+    this.status = obj.status || 'IDLE';
+    this.createdAt = obj.createdAt || null;
+    this.updatedAt = obj.updatedAt || null;
+    return true;
   }
 }
 
@@ -1189,6 +1525,26 @@ export class CompanyEnrichmentEngine {
     }
   }
 
+  sortPendingByLeverage(leads) {
+    if (!leads) return;
+    const countMap = new Map();
+    const leadsList = leads instanceof Map ? leads.values() : (Array.isArray(leads) ? leads : []);
+    for (const lead of leadsList) {
+      const orgId = lead?.company_id || lead?.organization_id || lead?.organization?.id;
+      if (orgId) {
+        countMap.set(orgId, (countMap.get(orgId) || 0) + 1);
+      }
+    }
+
+    const sorted = Array.from(this.pendingIds).sort((a, b) => {
+      const countA = countMap.get(a) || 0;
+      const countB = countMap.get(b) || 0;
+      return countB - countA;
+    });
+
+    this.pendingIds = new Set(sorted);
+  }
+
   isEnriched(id) {
     return this.enrichedCache.has(id);
   }
@@ -1254,6 +1610,139 @@ export class CompanyEnrichmentEngine {
     } finally {
       this.isProcessing = false;
     }
+  }
+}
+
+/**
+ * Lead Leverage Sorter: Sorts pending organization IDs descending by count of harvested employees attached
+ */
+export function sortOrgsByLeadLeverage(pendingOrgIds, leads) {
+  if (!pendingOrgIds) return [];
+  const countMap = new Map();
+  const leadsList = leads instanceof Map ? leads.values() : (Array.isArray(leads) ? leads : []);
+  for (const lead of leadsList) {
+    const orgId = lead?.company_id || lead?.organization_id || lead?.organization?.id;
+    if (orgId) {
+      countMap.set(orgId, (countMap.get(orgId) || 0) + 1);
+    }
+  }
+
+  const ids = Array.from(pendingOrgIds);
+  return ids.sort((a, b) => {
+    const countA = countMap.get(a) || 0;
+    const countB = countMap.get(b) || 0;
+    return countB - countA;
+  });
+}
+
+/**
+ * IndexedDBStorage Adapter for High-Throughput Safe Offloading
+ * Offloads bulk leads and companies in batches without chrome.storage quota limits
+ */
+export class IndexedDBStorage {
+  constructor(options = {}) {
+    this.dbName = options.dbName || 'ApolloLeadExtractorDB';
+    this.version = options.version || 1;
+    this.db = null;
+  }
+
+  async openDB() {
+    if (this.db) return this.db;
+    if (typeof indexedDB === 'undefined') {
+      return null;
+    }
+
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+
+      request.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('leads')) {
+          db.createObjectStore('leads', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('companies')) {
+          db.createObjectStore('companies', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('manifests')) {
+          db.createObjectStore('manifests', { keyPath: 'jobId' });
+        }
+      };
+
+      request.onsuccess = (e) => {
+        this.db = e.target.result;
+        resolve(this.db);
+      };
+
+      request.onerror = (e) => {
+        reject(e.target.error);
+      };
+    });
+  }
+
+  async putBatch(storeName, items = []) {
+    const db = await this.openDB();
+    if (!db || !items || items.length === 0) return 0;
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([storeName], 'readwrite');
+      const store = tx.objectStore(storeName);
+      let count = 0;
+
+      for (const item of items) {
+        if (!item) continue;
+        const record = { ...item };
+        if (!record.id) {
+          record.id = record.primary_domain || record.domain || record.name || `item_${Date.now()}_${Math.random()}`;
+        }
+        store.put(record);
+        count++;
+      }
+
+      tx.oncomplete = () => resolve(count);
+      tx.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async getAll(storeName) {
+    const db = await this.openDB();
+    if (!db) return [];
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([storeName], 'readonly');
+      const store = tx.objectStore(storeName);
+      const request = store.getAll();
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async count(storeName) {
+    const db = await this.openDB();
+    if (!db) return 0;
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([storeName], 'readonly');
+      const store = tx.objectStore(storeName);
+      const request = store.count();
+
+      request.onsuccess = () => resolve(request.result || 0);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async clear(storeName) {
+    const db = await this.openDB();
+    if (!db) return;
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([storeName], 'readwrite');
+      const store = tx.objectStore(storeName);
+      const request = store.clear();
+
+      request.onsuccess = () => resolve();
+      request.onerror = (e) => reject(e.target.error);
+    });
   }
 }
 
@@ -1568,5 +2057,427 @@ export function buildChunkedUnionCSV(items, preferredOrder = [], chunkSize = 250
   }
 
   return chunks;
+}
+
+// 20. Mission Control HUD: Rolling Velocity Tracker
+export function computeRollingVelocity(history = [], now = Date.now(), windowMs = 60000) {
+  if (!Array.isArray(history) || history.length < 2) return 0;
+  const filtered = history.filter(pt => pt && typeof pt.count === 'number' && typeof pt.ts === 'number' && (now - pt.ts) <= windowMs);
+  if (filtered.length < 2) return 0;
+
+  const first = filtered[0];
+  const last = filtered[filtered.length - 1];
+  const deltaCount = last.count - first.count;
+  const deltaSec = (last.ts - first.ts) / 1000;
+
+  if (deltaSec < 2 || deltaCount <= 0) return 0;
+  return Math.round((deltaCount / deltaSec) * 60);
+}
+
+// 21. Mission Control HUD: Dynamic ETA Predictor
+export function calculateETA(currentCount = 0, targetCount = 0, leadsPerMinute = 0) {
+  if (currentCount >= targetCount) return 'Complete';
+  if (!leadsPerMinute || leadsPerMinute <= 0) return 'Calculating...';
+
+  const remaining = targetCount - currentCount;
+  const minutes = remaining / leadsPerMinute;
+
+  if (minutes < 1) return '< 1m';
+  if (minutes < 60) return `~${Math.round(minutes)}m`;
+
+  const hrs = Math.floor(minutes / 60);
+  const mins = Math.round(minutes % 60);
+  return `~${hrs}h ${mins}m`;
+}
+
+// 22. Mission Control HUD: Live Data Quality & ICP Intelligence
+export function computeDataQualityMetrics(items = []) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return {
+      total: 0,
+      verifiedEmails: 0,
+      verifiedEmailPct: 0,
+      phoneCount: 0,
+      phonePct: 0,
+      decisionMakerCount: 0,
+      decisionMakerPct: 0
+    };
+  }
+
+  const total = items.length;
+  let verifiedEmails = 0;
+  let phoneCount = 0;
+  let decisionMakerCount = 0;
+
+  const DM_SENIORITIES = new Set(['founder', 'c_suite', 'partner', 'vp', 'director', 'owner', 'head']);
+
+  for (const item of items) {
+    if (!item) continue;
+    // Verified email
+    if (item.email_status === 'verified' || (typeof item.extrapolated_email_confidence === 'number' && item.extrapolated_email_confidence > 0.8)) {
+      verifiedEmails++;
+    }
+    // Phone coverage
+    const hasSanitizedPhone = typeof item.sanitized_phone === 'string' && item.sanitized_phone.trim().length > 0;
+    const hasPhoneArr = Array.isArray(item.phone_numbers) && item.phone_numbers.length > 0;
+    const hasCorpPhone = typeof item.corporate_phone === 'string' && item.corporate_phone.trim().length > 0;
+    if (hasSanitizedPhone || hasPhoneArr || hasCorpPhone) {
+      phoneCount++;
+    }
+    // Decision maker
+    if (typeof item.seniority === 'string' && DM_SENIORITIES.has(item.seniority.toLowerCase().trim())) {
+      decisionMakerCount++;
+    }
+  }
+
+  return {
+    total,
+    verifiedEmails,
+    verifiedEmailPct: Math.round((verifiedEmails / total) * 100),
+    phoneCount,
+    phonePct: Math.round((phoneCount / total) * 100),
+    decisionMakerCount,
+    decisionMakerPct: Math.round((decisionMakerCount / total) * 100)
+  };
+}
+
+// 23. Mission Control HUD: State Formatting Controller
+export function formatMissionControlState(state = {}) {
+  const {
+    isHarvestingActive = false,
+    harvestedCount = 0,
+    targetLeads = 0,
+    velocity = 0,
+    cooldownRemaining = null,
+    sliceLabel = null,
+    currentSlice = 0,
+    totalSlices = 0,
+    sliceHarvested = 0,
+    sliceTotal = 0,
+    quality = null,
+    circuitBreakerTripped = false
+  } = state;
+
+  const isCooldown = cooldownRemaining !== null && cooldownRemaining > 0;
+  let statusBadge = 'READY';
+  let indicatorColor = '#10b981'; // green
+
+  if (circuitBreakerTripped) {
+    statusBadge = 'HALTED';
+    indicatorColor = '#ef4444'; // red
+  } else if (isCooldown) {
+    statusBadge = `COOLDOWN (${cooldownRemaining}s)`;
+    indicatorColor = '#38bdf8'; // blue
+  } else if (isHarvestingActive) {
+    statusBadge = 'RUNNING';
+    indicatorColor = '#f59e0b'; // amber
+  }
+
+  const totalCountDisplay = Number(harvestedCount).toLocaleString();
+  const velocityStr = velocity > 0 ? `⚡ ${velocity}/min` : '⚡ Calculating...';
+  const etaStr = targetLeads > 0 ? `⏱️ ${calculateETA(harvestedCount, targetLeads, velocity)}` : '';
+
+  let cabinetStr = '';
+  if (sliceLabel) {
+    const sliceIndexPart = totalSlices > 0 ? ` (Slice ${currentSlice}/${totalSlices})` : '';
+    cabinetStr = `[${sliceLabel}]${sliceIndexPart}`;
+  }
+
+  const cabinetProgressPct = (sliceTotal && sliceTotal > 0)
+    ? Math.min(100, Math.round((sliceHarvested / sliceTotal) * 100))
+    : 0;
+
+  const q = quality || { verifiedEmailPct: 0, phonePct: 0, decisionMakerPct: 0 };
+  const formattedQuality = {
+    verifiedStr: `${q.verifiedEmailPct || 0}%`,
+    phoneStr: `${q.phonePct || 0}%`,
+    decisionMakerStr: `${q.decisionMakerPct || 0}%`
+  };
+
+  return {
+    statusBadge,
+    indicatorColor,
+    isCooldown,
+    totalCountDisplay,
+    velocityStr,
+    etaStr,
+    cabinetStr,
+    cabinetProgressPct,
+    quality: formattedQuality
+  };
+}
+
+// 24. Multi-Dimensional Bisection Engine Constants & Generator
+export const ALL_APOLLO_SENIORITIES = [
+  'founder', 'owner', 'c_suite', 'partner', 'vp', 'head', 'director', 'intern', 'senior', 'manager', 'entry'
+];
+
+export const EMAIL_STATUS_PARTITIONS = [
+  { key: 'verified', values: ['verified'] },
+  { key: 'guessed', values: ['guessed'] },
+  { key: 'unavailable', values: ['unavailable'] }
+];
+
+export function generateMultiDimensionalPlan(basePayload = {}, options = {}) {
+  const rawBrackets = resolveExecutionBrackets(basePayload, options);
+  const planUnits = [];
+
+  for (const bracketArr of rawBrackets) {
+    const bracketStr = Array.isArray(bracketArr) ? bracketArr[0] : String(bracketArr);
+    
+    // Sparse micro-brackets can be queried in a single unit
+    if (bracketStr === '50,50' || options.isSparse) {
+      planUnits.push({
+        label: bracketStr,
+        bracket: [bracketStr],
+        seniority: null,
+        emailStatus: null,
+        keyword: null
+      });
+      continue;
+    }
+
+    const seniorities = Array.isArray(options.seniorities) && options.seniorities.length > 0
+      ? options.seniorities
+      : ALL_APOLLO_SENIORITIES;
+
+    for (const sen of seniorities) {
+      // Low volume seniorities (C-Suite, VP, Director, Head, Partner, Intern, Founder, Owner)
+      if (!['entry', 'manager', 'senior'].includes(sen)) {
+        planUnits.push({
+          label: `${bracketStr} ${sen}`,
+          bracket: [bracketStr],
+          seniority: sen,
+          emailStatus: null,
+          keyword: null
+        });
+        continue;
+      }
+
+      // Senior: 2-way email split (verified vs unverified)
+      if (sen === 'senior') {
+        planUnits.push({
+          label: `${bracketStr} senior verified`,
+          bracket: [bracketStr],
+          seniority: 'senior',
+          emailStatus: ['verified'],
+          keyword: null
+        });
+        planUnits.push({
+          label: `${bracketStr} senior unverified`,
+          bracket: [bracketStr],
+          seniority: 'senior',
+          emailStatus: ['guessed', 'unavailable'],
+          keyword: null
+        });
+        continue;
+      }
+
+      // Dense seniorities (entry & manager): 3-way email status decomposition
+      for (const est of EMAIL_STATUS_PARTITIONS) {
+        planUnits.push({
+          label: `${bracketStr} ${sen} ${est.key}`,
+          bracket: [bracketStr],
+          seniority: sen,
+          emailStatus: est.values,
+          keyword: null
+        });
+      }
+    }
+  }
+
+  return planUnits;
+}
+
+/**
+ * 25. Adaptive Dynamic Cabin Engine:
+ * Autonomous Pre-Flight Density Probing, Minimal API Calls & Recursive Bisection.
+ * Dynamically resolves only non-empty, reachable units (<= 250 leads each).
+ */
+export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, options = {}) {
+  if (typeof probeFn !== 'function') {
+    throw new Error('probeFn must be an async function returning total_entries count');
+  }
+
+  const maxLimit = options.maxLeadsPerCabinet || 250;
+  const isCompanies = options.isCompanies || false;
+  const onProbeProgress = options.onProbeProgress || null;
+  const optimalUnits = [];
+
+  let startingBrackets = [];
+  const customRanges = basePayload.organization_num_employees_ranges;
+  if (Array.isArray(customRanges) && customRanges.length > 0) {
+    for (const r of customRanges) {
+      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : String(r));
+      if (typeof str === 'string' && (str.endsWith(',') || str.endsWith('+') || str.startsWith(','))) {
+        const expanded = expandOpenHeadcountRange(str);
+        for (const item of expanded) {
+          const macro = item[0];
+          if (macro === '10001') {
+            startingBrackets.push({ min: 10001, max: 10001, label: '10001' });
+          } else {
+            const parts = macro.split(',').map(n => parseInt(n.trim(), 10));
+            startingBrackets.push({ min: parts[0], max: parts[1] || parts[0], label: macro });
+          }
+        }
+      } else if (typeof str === 'string') {
+        if (str === '10001') {
+          startingBrackets.push({ min: 10001, max: 10001, label: '10001' });
+        } else {
+          const parts = str.split(',').map(n => parseInt(n.trim(), 10));
+          startingBrackets.push({ min: parts[0], max: parts[1] || parts[0], label: str });
+        }
+      }
+    }
+  }
+
+  if (startingBrackets.length === 0) {
+    startingBrackets = [
+      { min: 1, max: 10, label: '1,10' },
+      { min: 11, max: 20, label: '11,20' },
+      { min: 21, max: 50, label: '21,50' },
+      { min: 51, max: 100, label: '51,100' },
+      { min: 101, max: 200, label: '101,200' },
+      { min: 201, max: 500, label: '201,500' },
+      { min: 501, max: 1000, label: '501,1000' },
+      { min: 1001, max: 5000, label: '1001,5000' },
+      { min: 5001, max: 10000, label: '5001,10000' },
+      { min: 10001, max: 10001, label: '10001' }
+    ];
+  }
+
+  // Short-Circuit Check: If search has an overall range filter, probe the whole search root first
+  if (customRanges && customRanges.length === 1) {
+    const rootTotal = await probeFn({ organization_num_employees_ranges: customRanges });
+    if (onProbeProgress) onProbeProgress({ type: 'ROOT_PROBE', total: rootTotal });
+    if (rootTotal === 0) {
+      return [];
+    }
+    if (rootTotal <= maxLimit) {
+      const singleLabel = Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0]);
+      return [{
+        label: `${singleLabel} (All Matching)`,
+        bracket: [singleLabel],
+        seniority: null,
+        emailStatus: null,
+        keyword: null,
+        total: rootTotal,
+        pagesNeeded: Math.ceil(rootTotal / 25),
+        mode: rootTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
+      }];
+    }
+  }
+
+  const queue = [...startingBrackets];
+
+  while (queue.length > 0) {
+    const item = queue.shift();
+    const count = await probeFn({ organization_num_employees_ranges: [item.label] });
+    if (onProbeProgress) onProbeProgress({ type: 'BRACKET_PROBE', label: item.label, total: count });
+
+    if (count === 0) {
+      continue;
+    }
+
+    if (count <= maxLimit) {
+      optimalUnits.push({
+        label: item.label,
+        bracket: [item.label],
+        seniority: null,
+        emailStatus: null,
+        keyword: null,
+        total: count,
+        pagesNeeded: Math.ceil(count / 25),
+        mode: count <= 125 ? 'Top-Down Only' : 'Bidirectional'
+      });
+      continue;
+    }
+
+    // Bisect headcount if span >= 5 and min < max
+    if (item.max - item.min >= 5 && item.min < item.max) {
+      const mid = Math.floor((item.min + item.max) / 2);
+      const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
+      const right = { min: mid + 1, max: item.max, label: `${mid + 1},${item.max}` };
+      queue.unshift(right);
+      queue.unshift(left);
+      continue;
+    }
+
+    if (isCompanies) {
+      if (item.min < item.max) {
+        const mid = Math.floor((item.min + item.max) / 2);
+        const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
+        const right = { min: mid + 1, max: item.max, label: `${mid + 1},${item.max}` };
+        queue.unshift(right);
+        queue.unshift(left);
+      } else {
+        optimalUnits.push({
+          label: item.label,
+          bracket: [item.label],
+          seniority: null,
+          emailStatus: null,
+          keyword: null,
+          total: count,
+          pagesNeeded: Math.min(10, Math.ceil(count / 25)),
+          mode: 'Bidirectional'
+        });
+      }
+      continue;
+    }
+
+    // Single integer headcount or tight span < 5 exceeding maxLimit: Pivot to Seniorities
+    const seniorities = Array.isArray(basePayload.person_seniorities) && basePayload.person_seniorities.length > 0
+      ? basePayload.person_seniorities
+      : ALL_APOLLO_SENIORITIES;
+
+    for (const sen of seniorities) {
+      const senCount = await probeFn({
+        organization_num_employees_ranges: [item.label],
+        person_seniorities: [sen]
+      });
+      if (onProbeProgress) onProbeProgress({ type: 'SENIORITY_PROBE', label: `${item.label} ${sen}`, total: senCount });
+
+      if (senCount === 0) continue;
+
+      if (senCount <= maxLimit) {
+        optimalUnits.push({
+          label: `${item.label} ${sen}`,
+          bracket: [item.label],
+          seniority: sen,
+          emailStatus: null,
+          keyword: null,
+          total: senCount,
+          pagesNeeded: Math.ceil(senCount / 25),
+          mode: senCount <= 125 ? 'Top-Down Only' : 'Bidirectional'
+        });
+        continue;
+      }
+
+      // If dense seniority still exceeds maxLimit: Pivot to 3-way Email Status
+      for (const emailPartition of EMAIL_STATUS_PARTITIONS) {
+        const emailCount = await probeFn({
+          organization_num_employees_ranges: [item.label],
+          person_seniorities: [sen],
+          contact_email_status: emailPartition.values
+        });
+        if (onProbeProgress) onProbeProgress({ type: 'EMAIL_PROBE', label: `${item.label} ${sen} ${emailPartition.key}`, total: emailCount });
+
+        if (emailCount === 0) continue;
+
+        optimalUnits.push({
+          label: `${item.label} ${sen} ${emailPartition.key}`,
+          bracket: [item.label],
+          seniority: sen,
+          emailStatus: emailPartition.values,
+          keyword: null,
+          total: emailCount,
+          pagesNeeded: Math.min(10, Math.ceil(emailCount / 25)),
+          mode: emailCount <= 125 ? 'Top-Down Only' : 'Bidirectional'
+        });
+      }
+    }
+  }
+
+  return optimalUnits;
 }
 

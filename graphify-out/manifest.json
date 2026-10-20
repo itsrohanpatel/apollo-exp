@@ -1,20 +1,20 @@
 {
   "extension/background.js": {
-    "mtime": 1792433243.6121254,
-    "seen": 1792435167.4182832,
-    "ast_hash": "60854ba567756c3c722b9f926a7870ae",
+    "mtime": 1792439069.189063,
+    "seen": 1792439324.1281366,
+    "ast_hash": "dd22745d3be5399b083a6861fe472dae",
     "semantic_hash": ""
   },
   "extension/content.js": {
-    "mtime": 1792434456.3200817,
-    "seen": 1792435167.4183095,
-    "ast_hash": "c0062b62408fba1df6796acd20e5fbf0",
+    "mtime": 1792437845.4372902,
+    "seen": 1792439324.1281598,
+    "ast_hash": "66fbd1c6f36f36c24753c6156d52cd8a",
     "semantic_hash": ""
   },
   "extension/injected.js": {
-    "mtime": 1792434735.1418183,
-    "seen": 1792435167.418322,
-    "ast_hash": "299f0ce646b79cf64fd3d61356362f61",
+    "mtime": 1792439170.8245533,
+    "seen": 1792439324.12817,
+    "ast_hash": "ab47d28f01b004ef1698789785dbd3c0",
     "semantic_hash": ""
   },
   "extension/manifest.json": {
@@ -30,9 +30,9 @@
     "semantic_hash": ""
   },
   "extension/slicer_core.js": {
-    "mtime": 1792434421.7426817,
-    "seen": 1792435167.4183426,
-    "ast_hash": "12cf47b4e719e9d2da68f6c4c647b733",
+    "mtime": 1792438742.3257952,
+    "seen": 1792439324.1282005,
+    "ast_hash": "faad09940afc02cf4a1b948dcf89d928",
     "semantic_hash": ""
   },
   "package.json": {
@@ -561,6 +561,36 @@
     "mtime": 1792428859.4843507,
     "seen": 1792435167.419457,
     "ast_hash": "e4faeef3ebd1485990085fa3d4889be7",
+    "semantic_hash": ""
+  },
+  "scratch/test_bracket_metadata.mjs": {
+    "mtime": 1792438422.8394833,
+    "seen": 1792439324.1282156,
+    "ast_hash": "eda6ca9f97c1fa1fcbc4566203df08a9",
+    "semantic_hash": ""
+  },
+  "scratch/test_metadata_mode.mjs": {
+    "mtime": 1792438328.579373,
+    "seen": 1792439324.1282218,
+    "ast_hash": "db4088f9bef5e16bf565fa5921bc65bf",
+    "semantic_hash": ""
+  },
+  "tests/dense_cabinet_harvest.test.mjs": {
+    "mtime": 1792438641.1759987,
+    "seen": 1792439324.1285121,
+    "ast_hash": "7c18a829a2e689950b7607189aa40ba5",
+    "semantic_hash": ""
+  },
+  "tests/hud_mission_control.test.mjs": {
+    "mtime": 1792435683.3180811,
+    "seen": 1792439324.1285322,
+    "ast_hash": "47f7a46b288c98265180ec2ab691fc80",
+    "semantic_hash": ""
+  },
+  ".claude/plans/mission-control-hud.plan.md": {
+    "mtime": 1792435614.2542934,
+    "seen": 1792439324.1286104,
+    "ast_hash": "fc8c6b353072aef6d73b9a52c82125ed",
     "semantic_hash": ""
   }
 }

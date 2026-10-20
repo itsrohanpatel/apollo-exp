@@ -116,15 +116,22 @@
     }
   }
 
+  let capturedApolloHeaders = null;
+
   function getApolloHeaders(isCompanies = null) {
     const isComp = isCompanies !== null ? isCompanies : (window.location.hash || window.location.href).includes('/companies');
+    
+    // 1. If we captured authentic headers directly from Apollo's active UI requests, mirror them dynamically
+    const baseHeaders = capturedApolloHeaders ? { ...capturedApolloHeaders } : {};
+
     const headers = {
       'content-type': 'application/json',
       'x-referer-host': 'app.apollo.io',
       'x-referer-path': isComp ? '/companies' : '/people',
       'x-accept-language': 'en',
-      'X-Requested-With': 'XMLHttpRequest'
+      ...baseHeaders
     };
+
     const csrf = getCookie('X-CSRF-TOKEN');
     if (csrf) {
       headers['x-csrf-token'] = csrf;
@@ -203,58 +210,113 @@
     return result;
   }
 
+  function safePostMessage(msg) {
+    const targetOrigin = window.location.origin === 'https://app.apollo.io' ? 'https://app.apollo.io' : window.location.origin;
+    window.postMessage(msg, targetOrigin);
+  }
+
   function processResponse(url, data) {
     if (!data || typeof data !== 'object') return;
 
     if (url.includes('/mixed_people/search') || url.includes('/mixed_people/api_search')) {
       const people = data.people || [];
       if (people.length > 0) {
-        window.postMessage({
+        safePostMessage({
           type: 'APOLLO_SCRAPER_DATA',
           dataType: 'people',
           url: url,
           items: people,
           pagination: data.pagination
-        }, '*');
+        });
       }
     } else if (url.includes('/mixed_companies/search')) {
       const orgs = data.organizations || [];
       if (orgs.length > 0) {
-        window.postMessage({
+        safePostMessage({
           type: 'APOLLO_SCRAPER_DATA',
           dataType: 'companies',
           url: url,
           items: orgs,
           pagination: data.pagination
-        }, '*');
+        });
       }
     } else if (url.includes('/people/match')) {
       if (data.person) {
-        window.postMessage({
+        safePostMessage({
           type: 'APOLLO_SCRAPER_DATA',
           dataType: 'person_match',
           url: url,
           items: [data.person]
-        }, '*');
+        });
       }
     } else if (url.includes('/contacts/search')) {
       const contacts = data.contacts || [];
       if (contacts.length > 0) {
-        window.postMessage({
+        safePostMessage({
           type: 'APOLLO_SCRAPER_DATA',
           dataType: 'contacts',
           url: url,
           items: contacts,
           pagination: data.pagination
-        }, '*');
+        });
       }
     }
+  }
+
+  // Helper to extract plain headers from fetch arguments (Headers instance, Array, or Object)
+  function extractHeaders(inputHeaders) {
+    if (!inputHeaders) return null;
+    const result = {};
+    const skipList = new Set(['content-length', 'host', 'origin', 'connection']);
+    try {
+      if (typeof inputHeaders.forEach === 'function') {
+        inputHeaders.forEach((val, key) => {
+          const lower = String(key || '').toLowerCase();
+          if (!skipList.has(lower)) {
+            result[lower] = val;
+          }
+        });
+      } else if (Array.isArray(inputHeaders)) {
+        for (const [k, v] of inputHeaders) {
+          const lower = String(k || '').toLowerCase();
+          if (!skipList.has(lower)) {
+            result[lower] = v;
+          }
+        }
+      } else if (typeof inputHeaders === 'object') {
+        for (const [k, v] of Object.entries(inputHeaders)) {
+          const lower = String(k || '').toLowerCase();
+          if (!skipList.has(lower)) {
+            result[lower] = v;
+          }
+        }
+      }
+    } catch (e) {}
+    return Object.keys(result).length > 0 ? result : null;
   }
 
   // 1. Monkey-patch window.fetch
   const rawFetch = window.fetch;
   window.fetch = async function (...args) {
     const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+
+    // Sniff authentic Apollo API headers dynamically from UI requests
+    if (url.includes('/api/v1/') && args[1]) {
+      let isHarvest = false;
+      if (args[1].body) {
+        if (typeof args[1].body === 'string' && args[1].body.includes('_isHarvestEngine')) {
+          isHarvest = true;
+        } else if (typeof args[1].body === 'object' && args[1].body?._isHarvestEngine) {
+          isHarvest = true;
+        }
+      }
+      if (!isHarvest && args[1].headers) {
+        const sniffed = extractHeaders(args[1].headers);
+        if (sniffed) {
+          capturedApolloHeaders = { ...(capturedApolloHeaders || {}), ...sniffed };
+        }
+      }
+    }
 
     // Sniff outgoing search payload
     if (url.includes('/mixed_people/search') && args[1] && args[1].body) {
@@ -263,10 +325,10 @@
         // Only save user-initiated searches, not our internal harvest requests
         if (!bodyObj._isHarvestEngine) {
           latestSearchPayload = { ...bodyObj };
-          window.postMessage({
+          safePostMessage({
             type: 'APOLLO_SEARCH_FILTER_CAPTURED',
             payload: latestSearchPayload
-          }, '*');
+          });
         }
       } catch (e) {}
     }
@@ -321,7 +383,7 @@
   }
 
   // Helper: decompose broad range into sub-250 micro ranges
-  function decomposeHighDensityBracket(bracketStr) {
+  function decomposeHighDensityBracket(bracketStr, options = {}) {
     if (typeof bracketStr !== 'string') return [[bracketStr]];
     const parts = bracketStr.split(',').map(s => parseInt(s.trim(), 10));
     if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) {
@@ -333,6 +395,7 @@
       return [[`${min},${max}`]];
     }
 
+    const isGranular = options.granular === true;
     const steps = [];
     let cur = min;
 
@@ -352,54 +415,92 @@
         }
       } else if (cur <= 100) {
         const segEnd = Math.min(100, max);
+        const stepSize = isGranular ? 4 : 9; // Granular: steps of 5 (e.g. 51-55), default: steps of 10
         while (cur <= segEnd) {
-          const next = Math.min(cur + 9, segEnd);
+          const next = Math.min(cur + stepSize, segEnd);
           steps.push([`${cur},${next}`]);
           cur = next + 1;
         }
       } else if (cur <= 200) {
         const segEnd = Math.min(200, max);
-        while (cur <= segEnd) {
-          let next;
-          if (cur <= 150) next = Math.min(150, segEnd);
-          else next = segEnd;
-          steps.push([`${cur},${next}`]);
-          cur = next + 1;
+        if (isGranular) {
+          // Granular: steps of 10 (101-110, 111-120 ... 191-200)
+          while (cur <= segEnd) {
+            const next = Math.min(cur + 9, segEnd);
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
+        } else {
+          while (cur <= segEnd) {
+            let next;
+            if (cur <= 150) next = Math.min(150, segEnd);
+            else next = segEnd;
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
         }
       } else if (cur <= 500) {
         const segEnd = Math.min(500, max);
+        const stepSize = isGranular ? 24 : 49; // Granular: steps of 25 (e.g. 201-225), default: steps of 50
         while (cur <= segEnd) {
-          const next = Math.min(cur + 49, segEnd);
+          const next = Math.min(cur + stepSize, segEnd);
           steps.push([`${cur},${next}`]);
           cur = next + 1;
         }
       } else if (cur <= 1000) {
         const segEnd = Math.min(1000, max);
-        while (cur <= segEnd) {
-          let next;
-          if (cur <= 750) next = Math.min(750, segEnd);
-          else next = segEnd;
-          steps.push([`${cur},${next}`]);
-          cur = next + 1;
+        if (isGranular) {
+          // Granular: steps of 50 (501-550, 551-600 ... 951-1000)
+          while (cur <= segEnd) {
+            const next = Math.min(cur + 49, segEnd);
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
+        } else {
+          while (cur <= segEnd) {
+            let next;
+            if (cur <= 750) next = Math.min(750, segEnd);
+            else next = segEnd;
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
         }
       } else if (cur <= 5000) {
         const segEnd = Math.min(5000, max);
-        while (cur <= segEnd) {
-          let next;
-          if (cur <= 2000) next = Math.min(2000, segEnd);
-          else if (cur <= 3500) next = Math.min(3500, segEnd);
-          else next = segEnd;
-          steps.push([`${cur},${next}`]);
-          cur = next + 1;
+        if (isGranular) {
+          // Granular: steps of 250
+          while (cur <= segEnd) {
+            const next = Math.min(cur + 249, segEnd);
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
+        } else {
+          while (cur <= segEnd) {
+            let next;
+            if (cur <= 2000) next = Math.min(2000, segEnd);
+            else if (cur <= 3500) next = Math.min(3500, segEnd);
+            else next = segEnd;
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
         }
       } else if (cur <= 10000) {
         const segEnd = Math.min(10000, max);
-        while (cur <= segEnd) {
-          let next;
-          if (cur <= 7500) next = Math.min(7500, segEnd);
-          else next = segEnd;
-          steps.push([`${cur},${next}`]);
-          cur = next + 1;
+        if (isGranular) {
+          // Granular: steps of 500
+          while (cur <= segEnd) {
+            const next = Math.min(cur + 499, segEnd);
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
+        } else {
+          while (cur <= segEnd) {
+            let next;
+            if (cur <= 7500) next = Math.min(7500, segEnd);
+            else next = segEnd;
+            steps.push([`${cur},${next}`]);
+            cur = next + 1;
+          }
         }
       } else {
         steps.push(['10001']);
@@ -461,14 +562,14 @@
   }
 
   // Generate Complete Adaptive Micro-Brackets for Open Range or Universal Set
-  function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,') {
+  function generateAdaptiveMicroBrackets(openRangeLowerStr = '5,', options = {}) {
     const macroBrackets = expandOpenHeadcountRange(openRangeLowerStr).map(b => b[0]);
     const microBrackets = [];
     for (const macro of macroBrackets) {
       if (macro === '10001') {
         microBrackets.push(['10001']);
       } else if (isHighDensityBracket([macro])) {
-        microBrackets.push(...decomposeHighDensityBracket(macro));
+        microBrackets.push(...decomposeHighDensityBracket(macro, options));
       } else {
         microBrackets.push([macro]);
       }
@@ -477,7 +578,7 @@
   }
 
   // Helper to extract active brackets or decompose into adaptive micro-brackets
-  function resolveExecutionBrackets(basePayload) {
+  function resolveExecutionBrackets(basePayload, options = {}) {
     const customRanges = basePayload?.organization_num_employees_ranges;
     if (Array.isArray(customRanges) && customRanges.length > 0) {
       const out = [];
@@ -490,13 +591,13 @@
             if (macro === '10001') {
               out.push(['10001']);
             } else if (isHighDensityBracket([macro])) {
-              out.push(...decomposeHighDensityBracket(macro));
+              out.push(...decomposeHighDensityBracket(macro, options));
             } else {
               out.push([macro]);
             }
           }
         } else if (typeof str === 'string' && isHighDensityBracket([str])) {
-          out.push(...decomposeHighDensityBracket(str));
+          out.push(...decomposeHighDensityBracket(str, options));
         } else {
           out.push(Array.isArray(r) ? r : [r]);
         }
@@ -509,12 +610,281 @@
       if (macro === '10001') {
         universal.push(['10001']);
       } else if (isHighDensityBracket([macro])) {
-        universal.push(...decomposeHighDensityBracket(macro));
+        universal.push(...decomposeHighDensityBracket(macro, options));
       } else {
         universal.push([macro]);
       }
     }
     return universal;
+  }
+
+  // 2.5 Multi-Dimensional Bisection Engine Constants & Generator
+  const ALL_APOLLO_SENIORITIES = [
+    'founder', 'owner', 'c_suite', 'partner', 'vp', 'head', 'director', 'intern', 'senior', 'manager', 'entry'
+  ];
+
+  const EMAIL_STATUS_PARTITIONS = [
+    { key: 'verified', values: ['verified'] },
+    { key: 'guessed', values: ['guessed'] },
+    { key: 'unavailable', values: ['unavailable'] }
+  ];
+
+  function generateMultiDimensionalPlan(basePayload = {}, options = {}) {
+    const rawBrackets = resolveExecutionBrackets(basePayload, options);
+    const planUnits = [];
+
+    for (const bracketArr of rawBrackets) {
+      const bracketStr = Array.isArray(bracketArr) ? bracketArr[0] : String(bracketArr);
+
+      if (bracketStr === '50,50' || options.isSparse) {
+        planUnits.push({
+          label: bracketStr,
+          bracket: [bracketStr],
+          seniority: null,
+          emailStatus: null,
+          keyword: null
+        });
+        continue;
+      }
+
+      const seniorities = Array.isArray(options.seniorities) && options.seniorities.length > 0
+        ? options.seniorities
+        : ALL_APOLLO_SENIORITIES;
+
+      for (const sen of seniorities) {
+        if (!['entry', 'manager', 'senior'].includes(sen)) {
+          planUnits.push({
+            label: `${bracketStr} ${sen}`,
+            bracket: [bracketStr],
+            seniority: sen,
+            emailStatus: null,
+            keyword: null
+          });
+          continue;
+        }
+
+        if (sen === 'senior') {
+          planUnits.push({
+            label: `${bracketStr} senior verified`,
+            bracket: [bracketStr],
+            seniority: 'senior',
+            emailStatus: ['verified'],
+            keyword: null
+          });
+          planUnits.push({
+            label: `${bracketStr} senior unverified`,
+            bracket: [bracketStr],
+            seniority: 'senior',
+            emailStatus: ['guessed', 'unavailable'],
+            keyword: null
+          });
+          continue;
+        }
+
+        for (const est of EMAIL_STATUS_PARTITIONS) {
+          planUnits.push({
+            label: `${bracketStr} ${sen} ${est.key}`,
+            bracket: [bracketStr],
+            seniority: sen,
+            emailStatus: est.values,
+            keyword: null
+          });
+        }
+      }
+    }
+
+    return planUnits;
+  }
+
+  // 2.6 Adaptive Dynamic Cabin Engine: Dynamic Density Sizing & Bisection
+  async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, options = {}) {
+    if (typeof probeFn !== 'function') {
+      throw new Error('probeFn must be an async function returning total_entries count');
+    }
+
+    const maxLimit = options.maxLeadsPerCabinet || 245;
+    const isCompanies = options.isCompanies || false;
+    const onProbeProgress = options.onProbeProgress || null;
+    const optimalUnits = [];
+
+    let startingBrackets = [];
+    const customRanges = basePayload.organization_num_employees_ranges;
+    if (Array.isArray(customRanges) && customRanges.length > 0) {
+      for (const r of customRanges) {
+        const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : String(r));
+        if (typeof str === 'string' && (str.endsWith(',') || str.endsWith('+') || str.startsWith(','))) {
+          const expanded = expandOpenHeadcountRange(str);
+          for (const item of expanded) {
+            const macro = item[0];
+            if (macro === '10001') {
+              startingBrackets.push({ min: 10001, max: 10001, label: '10001' });
+            } else {
+              const parts = macro.split(',').map(n => parseInt(n.trim(), 10));
+              startingBrackets.push({ min: parts[0], max: parts[1] || parts[0], label: macro });
+            }
+          }
+        } else if (typeof str === 'string') {
+          if (str === '10001') {
+            startingBrackets.push({ min: 10001, max: 10001, label: '10001' });
+          } else {
+            const parts = str.split(',').map(n => parseInt(n.trim(), 10));
+            startingBrackets.push({ min: parts[0], max: parts[1] || parts[0], label: str });
+          }
+        }
+      }
+    }
+
+    if (startingBrackets.length === 0) {
+      startingBrackets = [
+        { min: 1, max: 10, label: '1,10' },
+        { min: 11, max: 20, label: '11,20' },
+        { min: 21, max: 50, label: '21,50' },
+        { min: 51, max: 100, label: '51,100' },
+        { min: 101, max: 200, label: '101,200' },
+        { min: 201, max: 500, label: '201,500' },
+        { min: 501, max: 1000, label: '501,1000' },
+        { min: 1001, max: 5000, label: '1001,5000' },
+        { min: 5001, max: 10000, label: '5001,10000' },
+        { min: 10001, max: 10001, label: '10001' }
+      ];
+    }
+
+    // Short-Circuit Check: If search has an overall range filter, probe the whole search root first
+    if (customRanges && customRanges.length === 1) {
+      const rootTotal = await probeFn({ organization_num_employees_ranges: customRanges });
+      if (onProbeProgress) onProbeProgress({ type: 'ROOT_PROBE', total: rootTotal });
+      if (rootTotal === 0) {
+        return [];
+      }
+      if (rootTotal <= maxLimit) {
+        const singleLabel = Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0]);
+        return [{
+          label: `${singleLabel} (All Matching)`,
+          bracket: [singleLabel],
+          seniority: null,
+          emailStatus: null,
+          keyword: null,
+          total: rootTotal,
+          pagesNeeded: Math.ceil(rootTotal / 25),
+          mode: rootTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
+        }];
+      }
+    }
+
+    const queue = [...startingBrackets];
+
+    while (queue.length > 0) {
+      if (harvestAbort) break;
+      const item = queue.shift();
+      const count = await probeFn({ organization_num_employees_ranges: [item.label] });
+      if (onProbeProgress) onProbeProgress({ type: 'BRACKET_PROBE', label: item.label, total: count });
+
+      if (count === 0) {
+        continue;
+      }
+
+      if (count <= maxLimit) {
+        optimalUnits.push({
+          label: item.label,
+          bracket: [item.label],
+          seniority: null,
+          emailStatus: null,
+          keyword: null,
+          total: count,
+          pagesNeeded: Math.ceil(count / 25),
+          mode: count <= 125 ? 'Top-Down Only' : 'Bidirectional'
+        });
+        continue;
+      }
+
+      // Bisect headcount if span >= 5 and min < max
+      if (item.max - item.min >= 5 && item.min < item.max) {
+        const mid = Math.floor((item.min + item.max) / 2);
+        const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
+        const right = { min: mid + 1, max: item.max, label: `${mid + 1},${item.max}` };
+        queue.unshift(right);
+        queue.unshift(left);
+        continue;
+      }
+
+      if (isCompanies) {
+        if (item.min < item.max) {
+          const mid = Math.floor((item.min + item.max) / 2);
+          const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
+          const right = { min: mid + 1, max: item.max, label: `${mid + 1},${item.max}` };
+          queue.unshift(right);
+          queue.unshift(left);
+        } else {
+          optimalUnits.push({
+            label: item.label,
+            bracket: [item.label],
+            seniority: null,
+            emailStatus: null,
+            keyword: null,
+            total: count,
+            pagesNeeded: Math.min(10, Math.ceil(count / 25)),
+            mode: 'Bidirectional'
+          });
+        }
+        continue;
+      }
+
+      // Single integer headcount or tight span < 5 exceeding maxLimit: Pivot to Seniorities
+      const seniorities = Array.isArray(basePayload.person_seniorities) && basePayload.person_seniorities.length > 0
+        ? basePayload.person_seniorities
+        : ALL_APOLLO_SENIORITIES;
+
+      for (const sen of seniorities) {
+        if (harvestAbort) break;
+        const senCount = await probeFn({
+          organization_num_employees_ranges: [item.label],
+          person_seniorities: [sen]
+        });
+        if (onProbeProgress) onProbeProgress({ type: 'SENIORITY_PROBE', label: `${item.label} ${sen}`, total: senCount });
+
+        if (senCount === 0) continue;
+
+        if (senCount <= maxLimit) {
+          optimalUnits.push({
+            label: `${item.label} ${sen}`,
+            bracket: [item.label],
+            seniority: sen,
+            emailStatus: null,
+            keyword: null,
+            total: senCount,
+            pagesNeeded: Math.ceil(senCount / 25),
+            mode: senCount <= 125 ? 'Top-Down Only' : 'Bidirectional'
+          });
+          continue;
+        }
+
+        // If dense seniority still exceeds maxLimit: Pivot to 3-way Email Status
+        for (const emailPartition of EMAIL_STATUS_PARTITIONS) {
+          if (harvestAbort) break;
+          const emailCount = await probeFn({
+            organization_num_employees_ranges: [item.label],
+            person_seniorities: [sen],
+            contact_email_status: emailPartition.values
+          });
+          if (onProbeProgress) onProbeProgress({ type: 'EMAIL_PROBE', label: `${item.label} ${sen} ${emailPartition.key}`, total: emailCount });
+
+          if (emailCount === 0) continue;
+
+          optimalUnits.push({
+            label: `${item.label} ${sen} ${emailPartition.key}`,
+            bracket: [item.label],
+            seniority: sen,
+            emailStatus: emailPartition.values,
+            keyword: null,
+            total: emailCount,
+            pagesNeeded: Math.min(10, Math.ceil(emailCount / 25)),
+            mode: emailCount <= 125 ? 'Top-Down Only' : 'Bidirectional'
+          });
+        }
+      }
+    }
+
+    return optimalUnits;
   }
 
   // 3. Autonomous Universal Deep Harvester
@@ -615,23 +985,76 @@
     delete base.excluded_organization_ids;
     delete base.person_ids_excluded;
 
+    // Pre-Flight Metadata Probe to discover exact dataset total
+    let totalSearchLeads = null;
+    try {
+      const probeRes = await rawFetch(isCompanies ? 'https://app.apollo.io/api/v1/mixed_companies/search_metadata_mode' : 'https://app.apollo.io/api/v1/mixed_people/search_metadata_mode', {
+        method: 'POST',
+        headers: getApolloHeaders(),
+        body: JSON.stringify({
+          ...base,
+          display_mode: 'metadata_mode',
+          context: isCompanies ? 'companies-index-page' : 'people-index-page'
+        })
+      });
+      if (probeRes.ok) {
+        const probeData = await probeRes.json();
+        if (probeData.pipeline_total) {
+          totalSearchLeads = probeData.pipeline_total;
+          console.log(`[Apollo Extractor] Discovered total search pipeline leads: ${totalSearchLeads}`);
+        }
+      }
+    } catch (e) {
+      console.warn('[Apollo Extractor] Pre-flight metadata probe error:', e);
+    }
+
     let requestCount = 0;
     let requestsSinceLastCooldown = 0;
     let leadsSinceLastCooldown = 0;
     const harvestedIds = new Set();
     const harvestedOrgIds = new Set();
+    const harvestHistory = [];
+    const qualitySummary = { verified: 0, phones: 0, dm: 0, total: 0 };
 
-    const reportProgress = (status, currentSlice = 0, totalSlices = 0, cooldownRemaining = null) => {
-      window.postMessage({
+    const trackItemQuality = (items) => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        if (!item || typeof item !== 'object') continue;
+        qualitySummary.total++;
+        const emailStatus = (item.email_status || '').toLowerCase();
+        const hasValidEmail = emailStatus === 'verified' || emailStatus === 'valid' || (item.email && !item.email.includes('email_not_unlocked') && !item.email.includes('unavailable'));
+        if (hasValidEmail) qualitySummary.verified++;
+
+        const phone = item.sanitized_phone || item.phone || item.direct_phone || item.corporate_phone || item.raw_phone;
+        if (phone && String(phone).trim() !== '') qualitySummary.phones++;
+
+        const title = (item.title || item.headline || '').toLowerCase();
+        const isDm = /\b(cxo|ceo|cto|cfo|cmo|coo|cro|cpo|president|founder|co-founder|owner|partner|director|vp|vice president|head of|lead)\b/i.test(title);
+        if (isDm) qualitySummary.dm++;
+      }
+    };
+
+    const reportProgress = (status, currentSlice = 0, totalSlices = 0, cooldownRemaining = null, sliceHarvested = 0, sliceTotal = null, sliceLabel = '') => {
+      const now = Date.now();
+      harvestHistory.push({ count: harvestedIds.size, ts: now });
+      if (harvestHistory.length > 60) harvestHistory.shift();
+
+      safePostMessage({
         type: 'APOLLO_HARVEST_PROGRESS',
         entityType: entityType,
         harvestedCount: harvestedIds.size,
         targetLeads: targetLeads,
         currentSlice: currentSlice,
         totalSlices: totalSlices,
+        sliceHarvested: sliceHarvested,
+        sliceTotal: sliceTotal,
+        sliceLabel: sliceLabel,
         status: status,
-        cooldownRemaining: cooldownRemaining
-      }, '*');
+        cooldownRemaining: cooldownRemaining,
+        latency: pacer ? pacer.getAverageLatency() : 0,
+        harvestHistory: harvestHistory.slice(-30),
+        qualitySummary: { ...qualitySummary }
+      });
     };
 
     const executeSmartCooldown = async (sliceIdx = 0, totalSlices = 0, isRateLimit = false) => {
@@ -694,10 +1117,11 @@
             payload.organization_num_employees_ranges = urlFilters.organization_num_employees_ranges;
           }
           if (isCompanies) {
-            payload.organization_ids_excluded = Array.from(harvestedOrgIds);
-            payload.excluded_organization_ids = Array.from(harvestedOrgIds);
+            const orgExclusions = Array.from(harvestedOrgIds).slice(-450);
+            payload.organization_ids_excluded = orgExclusions;
+            payload.excluded_organization_ids = orgExclusions;
           } else {
-            payload.person_ids_excluded = Array.from(harvestedIds);
+            payload.person_ids_excluded = Array.from(harvestedIds).slice(-450);
           }
 
           const tFetchStart = Date.now();
@@ -717,10 +1141,10 @@
 
           if (res.status === 403) {
             console.error(`[Apollo Extractor] Circuit breaker tripped! Status ${res.status}`);
-            window.postMessage({
+            safePostMessage({
               type: 'APOLLO_HARVEST_HALTED',
               reason: 'BLOCKED_403'
-            }, '*');
+            });
             break;
           }
 
@@ -748,6 +1172,7 @@
             }
           }
 
+          trackItemQuality(items);
           processResponse(searchEndpoint, data);
           reportProgress(`Harvested ${harvestedIds.size} ${entityType}...`);
 
@@ -803,10 +1228,10 @@
             }
 
             if (res.status === 403) {
-              window.postMessage({
+              safePostMessage({
                 type: 'APOLLO_HARVEST_HALTED',
                 reason: 'BLOCKED_403'
-              }, '*');
+              });
               harvestAbort = true;
               break;
             }
@@ -827,8 +1252,9 @@
             }
             leadsSinceLastCooldown += newInSlicePage;
 
+            trackItemQuality(items);
             processResponse(searchEndpoint, data);
-            reportProgress(`Harvesting [${bracket[0]}] Page ${page}`, sliceIdx + 1, totalSlices);
+            reportProgress(`Harvesting [${bracket[0]}] Page ${page}`, sliceIdx + 1, totalSlices, null, 0, null, bracket[0]);
 
             if (items.length < 25) break;
 
@@ -836,29 +1262,115 @@
           }
         }
 
-      } else {
-        // Method C: UNIVERSAL INFINITE DRAIN (DEFAULT - Extracts 100% of all matching leads)
-        // Combines continuous headcount partitioning with cabinet-scoped dynamic exclusion
-        const brackets = granular
-          ? (urlFilters.organization_num_employees_ranges
-              ? generateAdaptiveMicroBrackets(urlFilters.organization_num_employees_ranges[0])
-              : GRANULAR_HEADCOUNT_BRACKETS)
-          : resolveExecutionBrackets(urlFilters);
-        const totalSlices = brackets.length;
+        reportProgress('⚡ Analyzing Search Density & Planning Optimal Cabinets...', 0, 0);
 
-        for (let sliceIdx = 0; sliceIdx < totalSlices; sliceIdx++) {
+        // Fast probe function via active Apollo authenticated session
+        const probeCache = new Map();
+        const probeCabinet = async (subFilters) => {
+          if (harvestAbort) return 0;
+          const cacheKey = JSON.stringify(subFilters);
+          if (probeCache.has(cacheKey)) return probeCache.get(cacheKey);
+
+          const probePayload = {
+            ...base,
+            ...subFilters,
+            page: 1,
+            per_page: 1,
+            _isHarvestEngine: true
+          };
+
+          try {
+            const tStart = Date.now();
+            const res = await rawFetch(searchEndpoint, {
+              method: 'POST',
+              headers: getApolloHeaders(),
+              body: JSON.stringify(probePayload)
+            });
+            pacer.recordRoundTrip(Date.now() - tStart);
+
+            if (res.status === 429) {
+              await executeSmartCooldown(0, 0, true);
+              return probeCabinet(subFilters);
+            }
+            if (res.status !== 200) return 0;
+            const data = await res.json();
+            const total = data.pagination?.total_entries || 0;
+            probeCache.set(cacheKey, total);
+            await sleep(350); // Fast 350ms probe pacing
+            return total;
+          } catch (e) {
+            return 0;
+          }
+        };
+
+        let planUnits = [];
+        try {
+          planUnits = await resolveAdaptiveExecutionTree(probeCabinet, urlFilters, {
+            maxLeadsPerCabinet: 245,
+            isCompanies: isCompanies,
+            onProbeProgress: (p) => {
+              if (p.type === 'ROOT_PROBE') {
+                reportProgress(`⚡ Search root: ${p.total} total matching leads...`, 0, 0);
+              } else if (p.type === 'BRACKET_PROBE') {
+                reportProgress(`⚡ Probing Headcount [${p.label}]: ${p.total} leads...`, 0, 0);
+              } else if (p.type === 'SENIORITY_PROBE') {
+                reportProgress(`⚡ Probing Seniority [${p.label}]: ${p.total} leads...`, 0, 0);
+              } else if (p.type === 'EMAIL_PROBE') {
+                reportProgress(`⚡ Probing Email [${p.label}]: ${p.total} leads...`, 0, 0);
+              }
+            }
+          });
+        } catch (planErr) {
+          console.warn('[Apollo Extractor] Adaptive density probe note, falling back to static plan:', planErr);
+        }
+
+        if (!planUnits || planUnits.length === 0) {
+          planUnits = isCompanies
+            ? resolveExecutionBrackets(urlFilters, { granular: true }).map(b => ({ label: b[0], bracket: b, seniority: null, emailStatus: null, keyword: null }))
+            : generateMultiDimensionalPlan(urlFilters, { granular: true });
+        }
+
+        const totalSlices = planUnits.length;
+        console.log(`[Apollo Extractor] Adaptive Planning Complete: Resolved into ${totalSlices} targeted units (Zero Empty Cabinets)`);
+
+        // Checkpoint Signature & Resumption State
+        const filterSignature = JSON.stringify({
+          dep: urlFilters.person_department_or_subdepartments || [],
+          loc: urlFilters.person_locations || [],
+          titles: urlFilters.person_titles || [],
+          ranges: urlFilters.organization_num_employees_ranges || []
+        });
+
+        let startSliceIdx = 0;
+        let checkpointData = null;
+        try {
+          const rawCp = sessionStorage.getItem('apollo_active_harvest_checkpoint');
+          if (rawCp) {
+            checkpointData = JSON.parse(rawCp);
+            if (checkpointData && checkpointData.signature === filterSignature && typeof checkpointData.nextSliceIdx === 'number') {
+              startSliceIdx = Math.min(checkpointData.nextSliceIdx, totalSlices - 1);
+              if (Array.isArray(checkpointData.savedIds)) {
+                checkpointData.savedIds.forEach(id => harvestedIds.add(id));
+              }
+              console.log(`[Apollo Extractor] Resuming harvest from Unit ${startSliceIdx + 1}/${totalSlices} (Preserved ${harvestedIds.size} unique IDs)`);
+              reportProgress(`Resuming at Unit ${startSliceIdx + 1} of ${totalSlices}...`, startSliceIdx + 1, totalSlices);
+            }
+          }
+        } catch (cpErr) {
+          console.warn('[Apollo Extractor] Checkpoint parse note:', cpErr);
+        }
+
+        for (let sliceIdx = startSliceIdx; sliceIdx < totalSlices; sliceIdx++) {
           if (harvestedIds.size >= targetLeads || harvestAbort) break;
 
-          const bracket = brackets[sliceIdx];
-          const bracketLabel = bracket[0];
-          const cabinetHarvestedIds = new Set();
-          const cabinetHarvestedOrgIds = new Set();
-          let cabinetTotalEntries = null;
+          const unit = planUnits[sliceIdx];
+          const unitLabel = unit.label;
+          let unitTotalEntries = null;
 
-          reportProgress(`Analyzing cabinet [${bracketLabel}]...`, sliceIdx + 1, totalSlices);
+          reportProgress(`Scanning [${unitLabel}] (${sliceIdx + 1}/${totalSlices})...`, sliceIdx + 1, totalSlices, null, 0, null, unitLabel);
 
-          // Bidirectional Slices: Pass 1 (descending - top 125 leads) and Pass 2 (ascending - bottom 125 leads if > 125 total)
-          const sortPasses = [false]; // false = descending
+          // Bidirectional Pass: Pass 1 (descending: p1-5), Pass 2 (ascending: p1-5 if > 125 leads)
+          const sortPasses = [false];
 
           for (const sortAsc of sortPasses) {
             if (harvestedIds.size >= targetLeads || harvestAbort) break;
@@ -879,8 +1391,15 @@
                 page: page,
                 per_page: 25,
                 sort_ascending: sortAsc,
-                organization_num_employees_ranges: bracket
+                organization_num_employees_ranges: unit.bracket
               };
+
+              if (unit.seniority) {
+                payload.person_seniorities = [unit.seniority];
+              }
+              if (unit.emailStatus) {
+                payload.contact_email_status = unit.emailStatus;
+              }
 
               const tFetchStart = Date.now();
               const res = await rawFetch(searchEndpoint, {
@@ -899,28 +1418,39 @@
               }
 
               if (res.status === 403) {
-                window.postMessage({
+                safePostMessage({
                   type: 'APOLLO_HARVEST_HALTED',
                   reason: 'BLOCKED_403'
-                }, '*');
+                });
                 harvestAbort = true;
                 break;
               }
 
-              if (res.status !== 200) break;
+              if (res.status !== 200) {
+                console.warn(`[Apollo Extractor] API returned status ${res.status}. Backing off 15s...`);
+                reportProgress(`⚠️ Temporary API slowdown (${res.status}) — retrying in 15s...`, sliceIdx + 1, totalSlices);
+                await sleep(15000);
+                if (harvestAbort) break;
+                page--;
+                continue;
+              }
 
               let data = null;
               try {
                 data = await res.json();
               } catch (e) {
-                console.warn('[Apollo Extractor] Response body not valid JSON:', e);
-                break;
+                console.warn('[Apollo Extractor] Response body not valid JSON. Backing off 15s...');
+                reportProgress(`⚠️ Temporary network challenge — retrying in 15s...`, sliceIdx + 1, totalSlices);
+                await sleep(15000);
+                if (harvestAbort) break;
+                page--;
+                continue;
               }
-              if (cabinetTotalEntries === null && data.pagination && data.pagination.total_entries !== undefined) {
-                cabinetTotalEntries = data.pagination.total_entries;
-                // If cabinet has > 125 records and we haven't scheduled ascending pass yet, add it!
-                if (cabinetTotalEntries > 125 && sortPasses.length === 1) {
-                  sortPasses.push(true); // true = ascending pass
+
+              if (unitTotalEntries === null && data.pagination && data.pagination.total_entries !== undefined) {
+                unitTotalEntries = data.pagination.total_entries;
+                if (unitTotalEntries > 125 && sortPasses.length === 1) {
+                  sortPasses.push(true);
                 }
               }
 
@@ -932,191 +1462,36 @@
                 const id = item.id || (isCompanies ? (item.primary_domain || item.name) : null);
                 if (id && !harvestedIds.has(id)) {
                   harvestedIds.add(id);
-                  cabinetHarvestedIds.add(id);
                   newInPage++;
                 }
-                if (item.organization_id) cabinetHarvestedOrgIds.add(item.organization_id);
-                if (item.organization?.id) cabinetHarvestedOrgIds.add(item.organization.id);
-                if (isCompanies && item.id) cabinetHarvestedOrgIds.add(item.id);
+                if (item.organization_id) harvestedOrgIds.add(item.organization_id);
+                if (item.organization?.id) harvestedOrgIds.add(item.organization.id);
+                if (isCompanies && item.id) harvestedOrgIds.add(item.id);
               }
 
               leadsSinceLastCooldown += newInPage;
+              trackItemQuality(items);
               processResponse(searchEndpoint, data);
-              const totalStr = cabinetTotalEntries ? ` of ${cabinetTotalEntries}` : '';
-              reportProgress(`[${bracketLabel}] ${sortLabel} Harvested ${cabinetHarvestedIds.size}${totalStr}`, sliceIdx + 1, totalSlices);
 
-              // If fewer than 25 returned or no new unique records, break this pass
+              const totalStr = unitTotalEntries !== null ? ` of ${unitTotalEntries}` : '';
+              reportProgress(`[${unitLabel}] ${sortLabel} p${page} Harvested ${harvestedIds.size}${totalStr}`, sliceIdx + 1, totalSlices, null, newInPage, unitTotalEntries, unitLabel);
+
               if (items.length < 25 || newInPage === 0) break;
 
               await sleep(pacer.computeNextDelay());
             }
           }
 
-          // Seniority Pivot for Indivisible Enterprise Band (10001+)
-          if (!isCompanies && bracketLabel === '10001' && cabinetTotalEntries > 250 && harvestedIds.size < targetLeads && !harvestAbort) {
-            const SENIORITIES = ['founder', 'c_suite', 'partner', 'vp', 'head', 'director', 'manager', 'senior', 'entry'];
-            for (const sen of SENIORITIES) {
-              if (harvestedIds.size >= targetLeads || harvestAbort) break;
-              reportProgress(`[10001+] Pivoting Seniority: ${sen}...`, sliceIdx + 1, totalSlices);
-
-              for (let page = 1; page <= 5; page++) {
-                if (harvestedIds.size >= targetLeads || harvestAbort) break;
-                requestCount++;
-                if (await checkAndTriggerCooldown(sliceIdx, totalSlices)) {
-                  if (harvestAbort) break;
-                }
-
-                const senPayload = {
-                  ...base,
-                  _isHarvestEngine: true,
-                  page: page,
-                  per_page: 25,
-                  organization_num_employees_ranges: ['10001'],
-                  person_seniorities: [sen]
-                };
-
-                const tSenStart = Date.now();
-                const senRes = await rawFetch(searchEndpoint, {
-                  method: 'POST',
-                  headers: getApolloHeaders(),
-                  body: JSON.stringify(senPayload)
-                });
-                pacer.recordRoundTrip(Date.now() - tSenStart);
-
-                if (senRes.status === 429) {
-                  console.warn('[Apollo Extractor] 429 Rate Limit encountered. Triggering smart backoff cooldown...');
-                  await executeSmartCooldown(sliceIdx, totalSlices, true);
-                  if (harvestAbort) break;
-                  page--;
-                  continue;
-                }
-
-                if (senRes.status === 403) {
-                  window.postMessage({
-                    type: 'APOLLO_HARVEST_HALTED',
-                    reason: 'BLOCKED_403'
-                  }, '*');
-                  harvestAbort = true;
-                  break;
-                }
-                if (senRes.status !== 200) break;
-
-                let senData = null;
-                try { senData = await senRes.json(); } catch (e) { break; }
-                const senItems = senData.people || [];
-                if (senItems.length === 0) break;
-
-                let newInSen = 0;
-                for (const item of senItems) {
-                  if (item.id && !harvestedIds.has(item.id)) {
-                    harvestedIds.add(item.id);
-                    cabinetHarvestedIds.add(item.id);
-                    newInSen++;
-                  }
-                  if (item.organization_id) cabinetHarvestedOrgIds.add(item.organization_id);
-                  if (item.organization?.id) cabinetHarvestedOrgIds.add(item.organization.id);
-                }
-
-                leadsSinceLastCooldown += newInSen;
-                processResponse(searchEndpoint, senData);
-                reportProgress(`[10001+] ${sen} Harvested ${cabinetHarvestedIds.size} of ${cabinetTotalEntries}`, sliceIdx + 1, totalSlices);
-                if (senItems.length < 25 || newInSen === 0) break;
-
-                await sleep(pacer.computeNextDelay());
-              }
-            }
-          }
-
-          // Cabinet-Scoped Dynamic Exclusion for any dense bracket with remaining unharvested leads
-          if (cabinetTotalEntries && cabinetTotalEntries > 250 && cabinetHarvestedIds.size < cabinetTotalEntries && harvestedIds.size < targetLeads && !harvestAbort) {
-            reportProgress(`[${bracketLabel}] Deep draining remaining leads (${cabinetHarvestedIds.size} of ${cabinetTotalEntries})...`, sliceIdx + 1, totalSlices);
-
-            let dynamicStagnation = 0;
-
-            while (cabinetHarvestedIds.size < cabinetTotalEntries && harvestedIds.size < targetLeads && !harvestAbort) {
-              requestCount++;
-              if (await checkAndTriggerCooldown(sliceIdx, totalSlices)) {
-                if (harvestAbort) break;
-              }
-
-              const drainPayload = {
-                ...base,
-                _isHarvestEngine: true,
-                page: 1,
-                per_page: 25,
-                organization_num_employees_ranges: bracket
-              };
-
-              if (isCompanies) {
-                drainPayload.organization_ids_excluded = Array.from(cabinetHarvestedOrgIds);
-                drainPayload.excluded_organization_ids = Array.from(cabinetHarvestedOrgIds);
-              } else {
-                drainPayload.person_ids_excluded = Array.from(cabinetHarvestedIds);
-              }
-
-              const tDrainStart = Date.now();
-              const drainRes = await rawFetch(searchEndpoint, {
-                method: 'POST',
-                headers: getApolloHeaders(),
-                body: JSON.stringify(drainPayload)
-              });
-              pacer.recordRoundTrip(Date.now() - tDrainStart);
-
-              if (drainRes.status === 429) {
-                console.warn('[Apollo Extractor] 429 Rate Limit encountered. Triggering smart backoff cooldown...');
-                await executeSmartCooldown(sliceIdx, totalSlices, true);
-                if (harvestAbort) break;
-                continue;
-              }
-
-              if (drainRes.status === 403) {
-                window.postMessage({
-                  type: 'APOLLO_HARVEST_HALTED',
-                  reason: 'BLOCKED_403'
-                }, '*');
-                harvestAbort = true;
-                break;
-              }
-
-              if (drainRes.status !== 200) break;
-
-              let drainData = null;
-              try { drainData = await drainRes.json(); } catch (e) { break; }
-
-              const drainItems = isCompanies ? (drainData.organizations || []) : (drainData.people || []);
-              if (drainItems.length === 0) break;
-
-              let newInDrain = 0;
-              for (const item of drainItems) {
-                const id = item.id || (isCompanies ? (item.primary_domain || item.name) : null);
-                if (id && !harvestedIds.has(id)) {
-                  harvestedIds.add(id);
-                  cabinetHarvestedIds.add(id);
-                  newInDrain++;
-                }
-                if (item.organization_id) cabinetHarvestedOrgIds.add(item.organization_id);
-                if (item.organization?.id) cabinetHarvestedOrgIds.add(item.organization.id);
-                if (isCompanies && item.id) cabinetHarvestedOrgIds.add(item.id);
-              }
-
-              leadsSinceLastCooldown += newInDrain;
-              processResponse(searchEndpoint, drainData);
-              reportProgress(`[${bracketLabel}] Deep Drain Harvested ${cabinetHarvestedIds.size} of ${cabinetTotalEntries}`, sliceIdx + 1, totalSlices);
-
-              if (newInDrain === 0) {
-                dynamicStagnation++;
-                if (dynamicStagnation >= 2) break;
-              } else {
-                dynamicStagnation = 0;
-              }
-
-              if (cabinetHarvestedIds.size >= 450) break; // Apollo exclusion limit safety ceiling per bracket
-
-              await sleep(pacer.computeNextDelay());
-            }
-          }
-
-          // Clean up cabinet memory: cabinetHarvestedIds & cabinetHarvestedOrgIds reset automatically
+          // Persist unit checkpoint after completing each unit
+          try {
+            sessionStorage.setItem('apollo_active_harvest_checkpoint', JSON.stringify({
+              signature: filterSignature,
+              nextSliceIdx: sliceIdx + 1,
+              totalSlices: totalSlices,
+              savedIds: Array.from(harvestedIds),
+              timestamp: Date.now()
+            }));
+          } catch (e) {}
         }
       }
     } catch (err) {
@@ -1125,12 +1500,18 @@
       isHarvestingActive = false;
       const itemLabel = isCompanies ? 'companies' : 'leads';
       const finalMsg = harvestAbort ? 'Harvest stopped by user' : `Harvest complete (${harvestedIds.size} ${itemLabel})`;
+
+      // If finished completely without abort, clear active checkpoint
+      if (!harvestAbort && harvestedIds.size > 0) {
+        try { sessionStorage.removeItem('apollo_active_harvest_checkpoint'); } catch (e) {}
+      }
+
       reportProgress(finalMsg);
-      window.postMessage({
+      safePostMessage({
         type: 'APOLLO_HARVEST_FINISHED',
         entityType: entityType,
         totalHarvested: harvestedIds.size
-      }, '*');
+      });
     }
   }
 

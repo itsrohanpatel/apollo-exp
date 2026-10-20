@@ -28,55 +28,200 @@ const state = {
   activeTabId: null
 };
 
-// Initialize from chrome.storage.local
-chrome.storage.local.get(['scrapedLeads', 'scrapedCompanies', 'dailyHarvestedCount', 'deepEnrichmentEnabled', 'apollo_cached_orgs_v1'], (res) => {
-  if (!res) res = {};
-  if (res.apollo_cached_orgs_v1 && typeof res.apollo_cached_orgs_v1 === 'object') {
-    for (const [id, org] of Object.entries(res.apollo_cached_orgs_v1)) {
-      if (org && (org.technologies || org.total_funding)) {
-        enrichmentQueue.enrichedCache.set(id, org);
-      }
-    }
+// IndexedDBStorage Adapter for High-Throughput MV3 Service Worker
+class IndexedDBStorage {
+  constructor(options = {}) {
+    this.dbName = options.dbName || 'ApolloLeadExtractorDB';
+    this.version = options.version || 1;
+    this.db = null;
   }
-  if (res.scrapedLeads && Array.isArray(res.scrapedLeads)) {
-    res.scrapedLeads.forEach(l => state.leads.set(l.id || l.linkedin_url, l));
-  }
-  if (res.scrapedCompanies && Array.isArray(res.scrapedCompanies)) {
-    res.scrapedCompanies.forEach(c => {
-      state.companies.set(c.id || c.domain, c);
-      if (c.id && (c.technologies || c.total_funding)) {
-        enrichmentQueue.enrichedCache.set(c.id, c);
-      }
+
+  async openDB() {
+    if (this.db) return this.db;
+    if (typeof indexedDB === 'undefined') return null;
+
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+      request.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('leads')) {
+          db.createObjectStore('leads', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('companies')) {
+          db.createObjectStore('companies', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('manifests')) {
+          db.createObjectStore('manifests', { keyPath: 'jobId' });
+        }
+      };
+      request.onsuccess = (e) => {
+        this.db = e.target.result;
+        resolve(this.db);
+      };
+      request.onerror = (e) => reject(e.target.error);
     });
   }
-  if (res.dailyHarvestedCount) {
-    state.dailyHarvestedCount = res.dailyHarvestedCount;
-  }
-  if (typeof res.deepEnrichmentEnabled === 'boolean') {
-    state.deepEnrichmentEnabled = res.deepEnrichmentEnabled;
-  }
-  updateEnrichmentStats();
-  syncStorage();
-});
 
-function syncStorage() {
-  const allLeads = Array.from(state.leads.values());
-  const allCompanies = Array.from(state.companies.values());
+  async putBatch(storeName, items = []) {
+    const db = await this.openDB();
+    if (!db || !items || items.length === 0) return 0;
 
-  chrome.storage.local.set({
-    leadsCount: state.leads.size,
-    companiesCount: state.companies.size,
-    previewLeads: allLeads.slice(-5).reverse(),
-    previewCompanies: allCompanies.slice(-5).reverse(),
-    scrapedLeads: allLeads,
-    scrapedCompanies: allCompanies,
-    isHarvesting: state.isHarvesting,
-    deepEnrichmentEnabled: state.deepEnrichmentEnabled,
-    enrichmentStats: state.enrichmentStats,
-    harvestProgress: state.harvestProgress,
-    circuitBreaker: state.circuitBreaker,
-    dailyHarvestedCount: state.dailyHarvestedCount
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([storeName], 'readwrite');
+      const store = tx.objectStore(storeName);
+      let count = 0;
+
+      for (const item of items) {
+        if (!item) continue;
+        const record = { ...item };
+        if (!record.id) {
+          record.id = record.primary_domain || record.domain || record.name || `item_${Date.now()}_${Math.random()}`;
+        }
+        store.put(record);
+        count++;
+      }
+
+      tx.oncomplete = () => resolve(count);
+      tx.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async getAll(storeName) {
+    const db = await this.openDB();
+    if (!db) return [];
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([storeName], 'readonly');
+      const store = tx.objectStore(storeName);
+      const request = store.getAll();
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async clear(storeName) {
+    const db = await this.openDB();
+    if (!db) return;
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([storeName], 'readwrite');
+      const store = tx.objectStore(storeName);
+      const request = store.clear();
+
+      request.onsuccess = () => resolve();
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+}
+
+const idbStorage = new IndexedDBStorage();
+let syncDebounceTimer = null;
+
+// Initialize from IndexedDB & chrome.storage.local
+(async () => {
+  try {
+    const [storedLeads, storedCompanies] = await Promise.all([
+      idbStorage.getAll('leads'),
+      idbStorage.getAll('companies')
+    ]);
+    if (Array.isArray(storedLeads)) {
+      storedLeads.forEach(l => state.leads.set(l.id || l.linkedin_url, l));
+    }
+    if (Array.isArray(storedCompanies)) {
+      storedCompanies.forEach(c => {
+        state.companies.set(c.id || c.domain, c);
+        if (c.id && (c.technologies || c.total_funding)) {
+          enrichmentQueue.enrichedCache.set(c.id, c);
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('[Apollo Background] IndexedDB init note:', err);
+  }
+
+  chrome.storage.local.get(['scrapedLeads', 'scrapedCompanies', 'dailyHarvestedCount', 'deepEnrichmentEnabled', 'apollo_cached_orgs_v1'], (res) => {
+    if (!res) res = {};
+    if (res.apollo_cached_orgs_v1 && typeof res.apollo_cached_orgs_v1 === 'object') {
+      for (const [id, org] of Object.entries(res.apollo_cached_orgs_v1)) {
+        if (org && (org.technologies || org.total_funding)) {
+          enrichmentQueue.enrichedCache.set(id, org);
+        }
+      }
+    }
+    // Prune legacy bulk storage keys from chrome.storage.local to eliminate popup lag and disk bloat
+    const legacyKeysToRemove = [];
+    if (res.scrapedLeads) legacyKeysToRemove.push('scrapedLeads');
+    if (res.scrapedCompanies) legacyKeysToRemove.push('scrapedCompanies');
+    if (res.apollo_cached_orgs_v1) legacyKeysToRemove.push('apollo_cached_orgs_v1');
+    if (legacyKeysToRemove.length > 0) {
+      chrome.storage.local.remove(legacyKeysToRemove, () => {
+        console.log('[Apollo Background] Cleaned legacy storage caches:', legacyKeysToRemove);
+      });
+    }
+    // Fallback migration from storage.local if leads were previously saved there
+    if (state.leads.size === 0 && res.scrapedLeads && Array.isArray(res.scrapedLeads)) {
+      res.scrapedLeads.forEach(l => state.leads.set(l.id || l.linkedin_url, l));
+      idbStorage.putBatch('leads', res.scrapedLeads);
+    }
+    if (state.companies.size === 0 && res.scrapedCompanies && Array.isArray(res.scrapedCompanies)) {
+      res.scrapedCompanies.forEach(c => {
+        state.companies.set(c.id || c.domain, c);
+        if (c.id && (c.technologies || c.total_funding)) {
+          enrichmentQueue.enrichedCache.set(c.id, c);
+        }
+      });
+      idbStorage.putBatch('companies', res.scrapedCompanies);
+    }
+    if (res.dailyHarvestedCount) {
+      state.dailyHarvestedCount = res.dailyHarvestedCount;
+    }
+    if (typeof res.deepEnrichmentEnabled === 'boolean') {
+      state.deepEnrichmentEnabled = res.deepEnrichmentEnabled;
+    }
+    updateEnrichmentStats();
+    syncStorage(true);
   });
+})();
+
+function syncStorage(immediate = false) {
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
+
+  const executeSync = () => {
+    const allLeads = Array.from(state.leads.values());
+    const allCompanies = Array.from(state.companies.values());
+
+    // 1. Offload bulk arrays to IndexedDB in 100-record chunks
+    if (allLeads.length > 0) {
+      idbStorage.putBatch('leads', allLeads.slice(-100)).catch(() => {});
+    }
+    if (allCompanies.length > 0) {
+      idbStorage.putBatch('companies', allCompanies.slice(-100)).catch(() => {});
+    }
+
+    // 2. Persist ONLY scalar counters and 5-item previews to chrome.storage.local
+    chrome.storage.local.set({
+      leadsCount: state.leads.size,
+      companiesCount: state.companies.size,
+      previewLeads: allLeads.slice(-5).reverse(),
+      previewCompanies: allCompanies.slice(-5).reverse(),
+      isHarvesting: state.isHarvesting,
+      deepEnrichmentEnabled: state.deepEnrichmentEnabled,
+      enrichmentStats: state.enrichmentStats,
+      harvestProgress: state.harvestProgress,
+      circuitBreaker: state.circuitBreaker,
+      dailyHarvestedCount: state.dailyHarvestedCount
+    });
+  };
+
+  if (immediate) {
+    executeSync();
+  } else {
+    syncDebounceTimer = setTimeout(executeSync, 3000);
+  }
 }
 
 // 1. Universal Record Flattening & Normalization (Zero Data Loss)
@@ -436,9 +581,11 @@ const enrichmentQueue = {
   pendingIds: new Set(),
   inFlightIds: new Set(),
   enrichedCache: new Map(),
-  maxConcurrency: 3,
-  batchDelayMs: 200,
-  isProcessing: false
+  maxConcurrency: 1, // Safe serial execution to avoid concurrent rate pressure
+  batchDelayMs: 1200, // Safe human pacing (1.2s delay between org requests)
+  maxBatchPerCycle: 100, // Bounded cycle limit to prevent runaway sequential queues
+  isProcessing: false,
+  isPaused: false
 };
 
 function updateEnrichmentStats() {
@@ -461,23 +608,65 @@ function enqueueCompanyEnrichment(ids) {
 
   updateEnrichmentStats();
 
+  // If harvest is actively running, keep IDs queued in pendingIds but defer HTTP queries
+  // to avoid concurrent rate limit pressure and competing network load on Apollo.
+  if (state.isHarvesting || enrichmentQueue.isPaused) {
+    return;
+  }
+
   if (!enrichmentQueue.isProcessing && enrichmentQueue.pendingIds.size > 0) {
     processEnrichmentQueue();
   }
 }
 
 async function processEnrichmentQueue() {
+  if (enrichmentQueue.isProcessing || enrichmentQueue.isPaused) return;
   enrichmentQueue.isProcessing = true;
 
   try {
-    while (enrichmentQueue.pendingIds.size > 0 && !state.circuitBreaker.tripped && state.deepEnrichmentEnabled) {
-      const currentBatch = Array.from(enrichmentQueue.pendingIds).slice(0, enrichmentQueue.maxConcurrency);
+    let processedInCycle = 0;
+
+    while (
+      enrichmentQueue.pendingIds.size > 0 &&
+      !state.circuitBreaker.tripped &&
+      state.deepEnrichmentEnabled &&
+      !enrichmentQueue.isPaused
+    ) {
+      // Yield immediately to active harvester
+      if (state.isHarvesting) {
+        break;
+      }
+
+      // Safe bounded batching: avoid infinite lock if thousands of companies queued
+      if (processedInCycle >= enrichmentQueue.maxBatchPerCycle) {
+        console.log(`[Apollo Harvester] Deferred enrichment cycle cap reached (${processedInCycle} orgs). Yielding.`);
+        break;
+      }
+
+      // Lead Leverage Sorting (Issue I4): prioritize orgs with higher counts of harvested employees attached
+      const countMap = new Map();
+      for (const lead of state.leads.values()) {
+        const orgId = lead?.company_id || lead?.organization_id || lead?.organization?.id;
+        if (orgId) {
+          countMap.set(orgId, (countMap.get(orgId) || 0) + 1);
+        }
+      }
+      const sortedPending = Array.from(enrichmentQueue.pendingIds).sort((a, b) => {
+        const countA = countMap.get(a) || 0;
+        const countB = countMap.get(b) || 0;
+        return countB - countA;
+      });
+      enrichmentQueue.pendingIds = new Set(sortedPending);
+
+      const currentBatch = sortedPending.slice(0, enrichmentQueue.maxConcurrency);
       currentBatch.forEach(id => {
         enrichmentQueue.pendingIds.delete(id);
         enrichmentQueue.inFlightIds.add(id);
       });
 
       let updatedCount = 0;
+      let encountered429 = false;
+
       await Promise.all(currentBatch.map(async id => {
         try {
           const resp = await fetch(`https://app.apollo.io/api/v1/organizations/${id}`, {
@@ -494,15 +683,8 @@ async function processEnrichmentQueue() {
               const enriched = normalizeCompany(org);
               enrichmentQueue.enrichedCache.set(id, enriched);
 
-              chrome.storage.local.get(['apollo_cached_orgs_v1'], (cacheRes) => {
-                const orgMap = cacheRes?.apollo_cached_orgs_v1 || {};
-                orgMap[id] = enriched;
-                const keys = Object.keys(orgMap);
-                if (keys.length > 5000) {
-                  delete orgMap[keys[0]];
-                }
-                chrome.storage.local.set({ apollo_cached_orgs_v1: orgMap });
-              });
+              // Store enriched company directly in IndexedDB & memory instead of polluting chrome.storage.local
+              idbStorage.putBatch('companies', [enriched]).catch(() => {});
 
               const compKey = enriched.id || enriched.domain || enriched.company_name;
               const existingComp = state.companies.get(compKey) || {};
@@ -518,7 +700,9 @@ async function processEnrichmentQueue() {
               });
             }
           } else if (resp.status === 429) {
-            console.warn(`[Apollo Harvester] Rate limited (429) during org enrichment for ${id}`);
+            console.warn(`[Apollo Harvester] Rate limited (429) during org enrichment for ${id}. Pausing queue.`);
+            encountered429 = true;
+            enrichmentQueue.pendingIds.add(id); // Re-queue
           }
         } catch (err) {
           console.warn(`[Apollo Harvester] Org enrichment network error for ${id}:`, err);
@@ -527,10 +711,24 @@ async function processEnrichmentQueue() {
         }
       }));
 
+      processedInCycle += currentBatch.length;
       updateEnrichmentStats();
 
       if (updatedCount > 0) {
         syncStorage();
+      }
+
+      if (encountered429) {
+        state.circuitBreaker.tripped = true;
+        state.circuitBreaker.tripReason = 'RATE_LIMIT_429';
+        enrichmentQueue.isPaused = true;
+        // Auto-resume after 60s cooldown
+        setTimeout(() => {
+          state.circuitBreaker.tripped = false;
+          state.circuitBreaker.tripReason = null;
+          enrichmentQueue.isPaused = false;
+        }, 60000);
+        break;
       }
 
       if (enrichmentQueue.pendingIds.size > 0 && enrichmentQueue.batchDelayMs > 0) {
@@ -778,6 +976,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     });
     sendResponse({ success: true, isHarvesting: false });
+    if (state.deepEnrichmentEnabled && enrichmentQueue.pendingIds.size > 0 && !enrichmentQueue.isProcessing) {
+      processEnrichmentQueue();
+    }
     return true;
   }
 
@@ -812,6 +1013,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     state.harvestProgress.status = 'Complete';
     syncStorage();
     sendResponse({ success: true });
+    if (state.deepEnrichmentEnabled && enrichmentQueue.pendingIds.size > 0 && !enrichmentQueue.isProcessing) {
+      processEnrichmentQueue();
+    }
+    return true;
+  }
+
+  // Popup Instant State Query (Bypasses chrome.storage.local deserialization lag)
+  if (request.action === 'GET_POPUP_STATE') {
+    const allLeads = Array.from(state.leads.values());
+    const allCompanies = Array.from(state.companies.values());
+    sendResponse({
+      leadsCount: state.leads.size,
+      companiesCount: state.companies.size,
+      isHarvesting: state.isHarvesting,
+      harvestProgress: state.harvestProgress,
+      circuitBreaker: state.circuitBreaker,
+      deepEnrichmentEnabled: state.deepEnrichmentEnabled,
+      enrichmentStats: state.enrichmentStats,
+      previewLeads: allLeads.slice(-5).reverse(),
+      previewCompanies: allCompanies.slice(-5).reverse()
+    });
     return true;
   }
 
@@ -827,12 +1049,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       totalSlices: 0,
       status: 'Ready'
     };
-    syncStorage();
+    idbStorage.clear('leads').catch(() => {});
+    idbStorage.clear('companies').catch(() => {});
+    idbStorage.clear('manifests').catch(() => {});
+    syncStorage(true);
     sendResponse({ success: true, totalCount: 0 });
     return true;
   }
 
-  // E. Export CSV (Client-Side Blob)
+  // E. Export CSV (Client-Side Blob via Active Tab Content Script for clean naming)
   if (request.action === 'TRIGGER_EXPORT_CSV') {
     exportToCSV(request.entityType);
     sendResponse({ success: true });
@@ -870,6 +1095,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       processEnrichmentQueue();
     }
     sendResponse({ success: true, deepEnrichmentEnabled: state.deepEnrichmentEnabled, stats: state.enrichmentStats });
+    return true;
+  }
+
+  // I. Clear Deferred Enrichment Queue
+  if (request.action === 'CLEAR_ENRICHMENT_QUEUE') {
+    enrichmentQueue.pendingIds.clear();
+    enrichmentQueue.inFlightIds.clear();
+    updateEnrichmentStats();
+    syncStorage();
+    sendResponse({ success: true, stats: state.enrichmentStats });
+    return true;
+  }
+
+  // J. Toggle Pause/Resume Deferred Enrichment Queue
+  if (request.action === 'TOGGLE_ENRICHMENT_PAUSE') {
+    enrichmentQueue.isPaused = !enrichmentQueue.isPaused;
+    if (!enrichmentQueue.isPaused && enrichmentQueue.pendingIds.size > 0 && !enrichmentQueue.isProcessing) {
+      processEnrichmentQueue();
+    }
+    updateEnrichmentStats();
+    syncStorage();
+    sendResponse({ success: true, isPaused: enrichmentQueue.isPaused, stats: state.enrichmentStats });
     return true;
   }
 
@@ -953,6 +1200,28 @@ function exportToCSV(entityType) {
   const typeLabel = isCompanies ? 'companies' : 'leads';
   const filename = `apollo_universal_${typeLabel}_${new Date().toISOString().slice(0, 10)}.csv`;
 
+  // First attempt: trigger DOM anchor ObjectURL download in active Apollo tab (guarantees .csv extension in Windows)
+  chrome.tabs.query({ url: '*://*.apollo.io/*' }, (apolloTabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const targetTab = (apolloTabs && apolloTabs[0]) || tabs[0] || (state.activeTabId ? { id: state.activeTabId } : null);
+      if (targetTab && targetTab.id) {
+        chrome.tabs.sendMessage(targetTab.id, {
+          action: 'DOWNLOAD_CSV_CHUNKS',
+          chunks: chunks,
+          filename: filename
+        }, (res) => {
+          if (chrome.runtime.lastError || !res?.success) {
+            fallbackChromeDownload(chunks, filename);
+          }
+        });
+      } else {
+        fallbackChromeDownload(chunks, filename);
+      }
+    });
+  });
+}
+
+function fallbackChromeDownload(chunks, filename) {
   const blob = new Blob(chunks, { type: 'text/csv;charset=utf-8;' });
   const reader = new FileReader();
   reader.onloadend = function () {

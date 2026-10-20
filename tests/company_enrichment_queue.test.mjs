@@ -162,4 +162,25 @@ test('Bidirectional People -> Company Background Enrichment Queue', async (t) =>
     assert.equal(engine.isEnriched('fast_1'), true);
     assert.equal(engine.isEnriched('unknown_id'), false);
   });
+
+  await t.test('Lead Leverage Sorting prioritizes orgs with higher counts of harvested employees attached', () => {
+    const engine = new CompanyEnrichmentEngine();
+    engine.enqueue(['org_single', 'org_large', 'org_medium']);
+
+    // Leads mock: org_large has 5 employees, org_medium has 2, org_single has 1
+    const mockLeads = [
+      { id: 'p1', company_id: 'org_large' },
+      { id: 'p2', company_id: 'org_large' },
+      { id: 'p3', company_id: 'org_large' },
+      { id: 'p4', company_id: 'org_large' },
+      { id: 'p5', company_id: 'org_large' },
+      { id: 'p6', company_id: 'org_medium' },
+      { id: 'p7', company_id: 'org_medium' },
+      { id: 'p8', company_id: 'org_single' }
+    ];
+
+    engine.sortPendingByLeverage(mockLeads);
+    const sortedPending = Array.from(engine.pendingIds);
+    assert.deepEqual(sortedPending, ['org_large', 'org_medium', 'org_single']);
+  });
 });

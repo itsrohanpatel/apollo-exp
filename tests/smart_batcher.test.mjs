@@ -90,4 +90,88 @@ describe('SmartBatcher: Autonomous Adaptive Cabinet Sizer Engine', () => {
 
     assert.ok(plan.length >= 6);
   });
+
+  it('resolveAdaptiveExecutionTree short-circuits to 1 unit if root search total <= 250', async () => {
+    const { resolveAdaptiveExecutionTree } = await import('../extension/slicer_core.js');
+
+    const mockProbe = async (filters) => {
+      // Root probe returns 185 leads
+      return 185;
+    };
+
+    const units = await resolveAdaptiveExecutionTree(mockProbe, {
+      organization_num_employees_ranges: ['50,']
+    }, { maxLeadsPerCabinet: 250 });
+
+    assert.equal(units.length, 1);
+    assert.equal(units[0].total, 185);
+    assert.deepEqual(units[0].bracket, ['50,']);
+    assert.equal(units[0].seniority, null);
+    assert.equal(units[0].emailStatus, null);
+    assert.equal(units[0].mode, 'Bidirectional');
+  });
+
+  it('resolveAdaptiveExecutionTree bisects dense headcount brackets down to sub-250 units', async () => {
+    const { resolveAdaptiveExecutionTree } = await import('../extension/slicer_core.js');
+
+    const density = {
+      '51,100': 180, // fits in 1 unit
+      '101,200': 420, // exceeds 250 -> bisects
+      '101,150': 210, // fits
+      '151,200': 210 // fits
+    };
+
+    const mockProbe = async (filters) => {
+      const b = filters.organization_num_employees_ranges?.[0];
+      return density[b] ?? 0;
+    };
+
+    const units = await resolveAdaptiveExecutionTree(mockProbe, {
+      organization_num_employees_ranges: ['51,100', '101,200']
+    }, { maxLeadsPerCabinet: 250 });
+
+    assert.equal(units.length, 3);
+    assert.deepEqual(units.map(u => u.bracket[0]), ['51,100', '101,150', '151,200']);
+    for (const u of units) {
+      assert.ok(u.total <= 250);
+      assert.equal(u.seniority, null);
+      assert.equal(u.emailStatus, null);
+    }
+  });
+
+  it('resolveAdaptiveExecutionTree pivots single-integer enterprise bracket to seniorities and email partitions', async () => {
+    const { resolveAdaptiveExecutionTree } = await import('../extension/slicer_core.js');
+
+    const mockProbe = async (filters) => {
+      const b = filters.organization_num_employees_ranges?.[0];
+      const sen = filters.person_seniorities?.[0];
+      const est = filters.contact_email_status?.[0];
+
+      if (b === '10001') {
+        if (!sen) return 800; // Total 10001
+        if (sen === 'c_suite') return 50; // Fits
+        if (sen === 'manager') {
+          if (!est) return 500; // Dense manager -> pivots to email
+          if (est === 'verified') return 200; // Fits
+          if (est === 'guessed') return 180; // Fits
+          if (est === 'unavailable') return 120; // Fits
+        }
+        return 0;
+      }
+      return 0;
+    };
+
+    const units = await resolveAdaptiveExecutionTree(mockProbe, {
+      organization_num_employees_ranges: ['10001']
+    }, { maxLeadsPerCabinet: 250 });
+
+    assert.ok(units.length >= 4);
+    const cSuiteUnit = units.find(u => u.seniority === 'c_suite');
+    assert.ok(cSuiteUnit);
+    assert.equal(cSuiteUnit.total, 50);
+
+    const managerVerified = units.find(u => u.seniority === 'manager' && u.emailStatus?.[0] === 'verified');
+    assert.ok(managerVerified);
+    assert.equal(managerVerified.total, 200);
+  });
 });

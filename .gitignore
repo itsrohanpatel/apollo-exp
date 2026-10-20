@@ -10,11 +10,15 @@ npm-debug.log*
 
 # Scraped Data Dumps & CSV Exports
 *.csv
+*.jsonl
 data/*.csv
 data/*.json
 scripts/*.json
 scripts/last_scraped_leads.json
 *.json.gz
+exports/
+scratch/
+05c3c2fb-0ce1-4366-aab3-05745122488b
 
 
 # Third-party benchmark clones (embedded git repos)

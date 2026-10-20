@@ -36,122 +36,142 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  let renderThrottleTimer = null;
+  function scheduleRender() {
+    if (renderThrottleTimer) return;
+    renderThrottleTimer = setTimeout(() => {
+      renderThrottleTimer = null;
+      renderState();
+    }, 200);
+  }
+
   function renderState() {
-    chrome.storage.local.get([
-      'leadsCount',
-      'companiesCount',
-      'isHarvesting',
-      'harvestProgress',
-      'circuitBreaker',
-      'previewLeads',
-      'previewCompanies',
-      'deepEnrichmentEnabled',
-      'enrichmentStats'
-    ], (data) => {
-      if (!data) data = {};
-      const leadsCount = data.leadsCount || 0;
-      const companiesCount = data.companiesCount || 0;
-      const previewLeads = data.previewLeads || [];
-      const previewCompanies = data.previewCompanies || [];
-      leadsCountEl.innerText = leadsCount.toLocaleString();
-      companiesCountEl.innerText = companiesCount.toLocaleString();
-
-      if (deepEnrichmentToggle) {
-        deepEnrichmentToggle.checked = data.deepEnrichmentEnabled !== false;
-      }
-      const enrichStats = data.enrichmentStats || {};
-      if (enrichmentStatusRow) {
-        if (enrichStats.pending > 0 || enrichStats.enriched > 0) {
-          enrichmentStatusRow.style.display = 'block';
-          if (enrichmentPendingCount) enrichmentPendingCount.innerText = enrichStats.pending || 0;
-          if (enrichmentEnrichedCount) enrichmentEnrichedCount.innerText = enrichStats.enriched || 0;
-        } else {
-          enrichmentStatusRow.style.display = 'none';
-        }
-      }
-
-      const isHarvesting = !!data.isHarvesting;
-      const progress = data.harvestProgress || {};
-      const cb = data.circuitBreaker || {};
-
-      if (isHarvesting) {
-        statusIndicator.classList.add('active');
-        statusText.innerText = progress.status || 'Harvesting...';
-        btnStartHarvest.style.display = 'none';
-        btnStopHarvest.style.display = 'inline-flex';
-        progressSection.style.display = 'flex';
-
-        // Calculate progress percentage
-        const currentCount = progress.entityType === 'companies' ? companiesCount : leadsCount;
-        const target = progress.targetLeads || parseInt(targetLeadsInput.value, 10) || 50000;
-        const pct = target >= 50000 ? Math.min(100, Math.round((currentCount / (progress.totalSlices ? progress.totalSlices * 100 : 1000)) * 100)) : Math.min(100, Math.round((currentCount / target) * 100));
-
-        progressPercent.innerText = target >= 50000 ? `${currentCount} Items` : `${pct}%`;
-        progressBarFill.style.width = `${Math.min(100, pct)}%`;
-
-        if (progress.totalSlices > 0) {
-          progressSliceLabel.innerText = `Slice ${progress.currentSlice || 1} of ${progress.totalSlices}`;
-        } else {
-          progressSliceLabel.innerText = `${currentCount} / ${target >= 50000 ? 'ALL' : target} Items`;
-        }
-        progressSubtext.innerText = progress.status || 'Pacing: Adaptive jitter + smart cooldowns active';
-
+    // Instant In-Memory Query to background service worker (eliminates disk deserialization lag)
+    chrome.runtime.sendMessage({ action: 'GET_POPUP_STATE' }, (data) => {
+      if (chrome.runtime.lastError || !data) {
+        // Fallback to local storage if worker is spinning up
+        chrome.storage.local.get([
+          'leadsCount',
+          'companiesCount',
+          'isHarvesting',
+          'harvestProgress',
+          'circuitBreaker',
+          'previewLeads',
+          'previewCompanies',
+          'deepEnrichmentEnabled',
+          'enrichmentStats'
+        ], (fallbackData) => {
+          applyStateToDOM(fallbackData || {});
+        });
       } else {
-        statusIndicator.classList.remove('active');
-        btnStartHarvest.style.display = 'inline-flex';
-        btnStopHarvest.style.display = 'none';
-
-        if (cb.tripped) {
-          statusIndicator.style.background = '#ef4444';
-          statusIndicator.style.boxShadow = '0 0 10px #ef4444';
-          statusText.innerText = `Halted: ${cb.reason}`;
-        } else {
-          statusIndicator.style.background = '#10b981';
-          statusIndicator.style.boxShadow = '0 0 10px #10b981';
-          statusText.innerText = 'Anti-Ban Engine Ready';
-          progressSection.style.display = 'none';
-        }
-      }
-
-      // Render Preview (isolated 5-item preview avoids holding multi-megabyte lead dumps in memory)
-      if (companiesCount > leadsCount && previewCompanies.length > 0) {
-        previewContainer.innerHTML = previewCompanies.map(c => `
-          <div class="preview-row">
-            <div class="preview-name">${escapeHTML(c.company_name || 'Unnamed Company')}</div>
-            <div class="preview-details">
-              ${c.domain ? escapeHTML(c.domain) + ' • ' : ''}
-              ${c.industry ? escapeHTML(c.industry) + ' • ' : ''}
-              ${c.employees ? escapeHTML(c.employees) + ' emp' : ''}
-              ${c.revenue ? ' • <span style="color:#10b981;">' + escapeHTML(c.revenue) + '</span>' : ''}
-            </div>
-          </div>
-        `).join('');
-      } else if (previewLeads.length > 0) {
-        previewContainer.innerHTML = previewLeads.map(lead => {
-          const tierColor = lead.icp_tier === 'Tier 1' ? '#4f46e5' : (lead.icp_tier === 'Tier 2' ? '#0284c7' : '#64748b');
-          const tierBadge = lead.icp_score !== undefined
-            ? `<span style="font-size:10px; font-weight:600; padding:1px 6px; border-radius:999px; background:${tierColor}; color:#fff; margin-left:6px;">${escapeHTML(lead.icp_tier || 'Score')}: ${lead.icp_score}</span>`
-            : '';
-          return `
-            <div class="preview-row">
-              <div class="preview-name" style="display:flex; align-items:center; justify-content:space-between;">
-                <span>${escapeHTML(lead.full_name || 'Unnamed Lead')}</span>
-                ${tierBadge}
-              </div>
-              <div class="preview-details">
-                ${lead.title ? escapeHTML(lead.title) + ' • ' : ''}
-                ${escapeHTML(lead.company_name || 'No Company')}
-                ${lead.email ? ' • <span style="color:#10b981;">' + escapeHTML(lead.email) + '</span>' : ''}
-                ${lead.company_technologies ? ' • <span style="color:#a855f7;">' + escapeHTML(lead.company_technologies.split('; ').slice(0, 2).join(', ')) + '</span>' : ''}
-                ${lead.company_funding ? ' • <span style="color:#f59e0b;">' + escapeHTML(lead.company_funding) + '</span>' : ''}
-              </div>
-            </div>
-          `;
-        }).join('');
-      } else {
-        previewContainer.innerHTML = `<div class="empty-state">No items captured yet. Set filters on Apollo and click "Start Deep Harvest"!</div>`;
+        applyStateToDOM(data);
       }
     });
+  }
+
+  function applyStateToDOM(data) {
+    const leadsCount = data.leadsCount || 0;
+    const companiesCount = data.companiesCount || 0;
+    const previewLeads = data.previewLeads || [];
+    const previewCompanies = data.previewCompanies || [];
+    leadsCountEl.innerText = leadsCount.toLocaleString();
+    companiesCountEl.innerText = companiesCount.toLocaleString();
+
+    if (deepEnrichmentToggle) {
+      deepEnrichmentToggle.checked = data.deepEnrichmentEnabled !== false;
+    }
+    const enrichStats = data.enrichmentStats || {};
+    if (enrichmentStatusRow) {
+      if (enrichStats.pending > 0 || enrichStats.enriched > 0) {
+        enrichmentStatusRow.style.display = 'block';
+        if (enrichmentPendingCount) enrichmentPendingCount.innerText = enrichStats.pending || 0;
+        if (enrichmentEnrichedCount) enrichmentEnrichedCount.innerText = enrichStats.enriched || 0;
+      } else {
+        enrichmentStatusRow.style.display = 'none';
+      }
+    }
+
+    const isHarvesting = !!data.isHarvesting;
+    const progress = data.harvestProgress || {};
+    const cb = data.circuitBreaker || {};
+
+    if (isHarvesting) {
+      statusIndicator.classList.add('active');
+      statusText.innerText = progress.status || 'Harvesting...';
+      btnStartHarvest.style.display = 'none';
+      btnStopHarvest.style.display = 'inline-flex';
+      progressSection.style.display = 'flex';
+
+      // Calculate progress percentage
+      const currentCount = progress.entityType === 'companies' ? companiesCount : leadsCount;
+      const target = progress.targetLeads || parseInt(targetLeadsInput.value, 10) || 50000;
+      const pct = target >= 50000 ? Math.min(100, Math.round((currentCount / (progress.totalSlices ? progress.totalSlices * 100 : 1000)) * 100)) : Math.min(100, Math.round((currentCount / target) * 100));
+
+      progressPercent.innerText = target >= 50000 ? `${currentCount} Items` : `${pct}%`;
+      progressBarFill.style.width = `${Math.min(100, pct)}%`;
+
+      if (progress.totalSlices > 0) {
+        progressSliceLabel.innerText = `Slice ${progress.currentSlice || 1} of ${progress.totalSlices}`;
+      } else {
+        progressSliceLabel.innerText = `${currentCount} / ${target >= 50000 ? 'ALL' : target} Items`;
+      }
+      progressSubtext.innerText = progress.status || 'Pacing: Adaptive jitter + smart cooldowns active';
+
+    } else {
+      statusIndicator.classList.remove('active');
+      btnStartHarvest.style.display = 'inline-flex';
+      btnStopHarvest.style.display = 'none';
+
+      if (cb.tripped) {
+        statusIndicator.style.background = '#ef4444';
+        statusIndicator.style.boxShadow = '0 0 10px #ef4444';
+        statusText.innerText = `Halted: ${cb.reason}`;
+      } else {
+        statusIndicator.style.background = '#10b981';
+        statusIndicator.style.boxShadow = '0 0 10px #10b981';
+        statusText.innerText = 'Anti-Ban Engine Ready';
+        progressSection.style.display = 'none';
+      }
+    }
+
+    // Render Preview (isolated 5-item preview avoids holding multi-megabyte lead dumps in memory)
+    if (companiesCount > leadsCount && previewCompanies.length > 0) {
+      previewContainer.innerHTML = previewCompanies.map(c => `
+        <div class="preview-row">
+          <div class="preview-name">${escapeHTML(c.company_name || 'Unnamed Company')}</div>
+          <div class="preview-details">
+            ${c.domain ? escapeHTML(c.domain) + ' • ' : ''}
+            ${c.industry ? escapeHTML(c.industry) + ' • ' : ''}
+            ${c.employees ? escapeHTML(c.employees) + ' emp' : ''}
+            ${c.revenue ? ' • <span style="color:#10b981;">' + escapeHTML(c.revenue) + '</span>' : ''}
+          </div>
+        </div>
+      `).join('');
+    } else if (previewLeads.length > 0) {
+      previewContainer.innerHTML = previewLeads.map(lead => {
+        const tierColor = lead.icp_tier === 'Tier 1' ? '#4f46e5' : (lead.icp_tier === 'Tier 2' ? '#0284c7' : '#64748b');
+        const tierBadge = lead.icp_score !== undefined
+          ? `<span style="font-size:10px; font-weight:600; padding:1px 6px; border-radius:999px; background:${tierColor}; color:#fff; margin-left:6px;">${escapeHTML(lead.icp_tier || 'Score')}: ${lead.icp_score}</span>`
+          : '';
+        return `
+          <div class="preview-row">
+            <div class="preview-name" style="display:flex; align-items:center; justify-content:space-between;">
+              <span>${escapeHTML(lead.full_name || 'Unnamed Lead')}</span>
+              ${tierBadge}
+            </div>
+            <div class="preview-details">
+              ${lead.title ? escapeHTML(lead.title) + ' • ' : ''}
+              ${escapeHTML(lead.company_name || 'No Company')}
+              ${lead.email ? ' • <span style="color:#10b981;">' + escapeHTML(lead.email) + '</span>' : ''}
+              ${lead.company_technologies ? ' • <span style="color:#a855f7;">' + escapeHTML(lead.company_technologies.split('; ').slice(0, 2).join(', ')) + '</span>' : ''}
+              ${lead.company_funding ? ' • <span style="color:#f59e0b;">' + escapeHTML(lead.company_funding) + '</span>' : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    } else {
+      previewContainer.innerHTML = `<div class="empty-state">No items captured yet. Set filters on Apollo and click "Start Deep Harvest"!</div>`;
+    }
   }
 
   function escapeHTML(str) {
@@ -180,11 +200,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Initial render & listener
+  // Initial render & throttled listener
   renderState();
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local') {
-      renderState();
+      scheduleRender();
     }
   });
 
