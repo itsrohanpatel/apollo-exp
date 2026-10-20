@@ -1,20 +1,20 @@
 {
   "extension/background.js": {
-    "mtime": 1792439069.189063,
-    "seen": 1792439324.1281366,
-    "ast_hash": "dd22745d3be5399b083a6861fe472dae",
+    "mtime": 1792485980.676873,
+    "seen": 1792501247.5660193,
+    "ast_hash": "751b1b0ec6ba811f7fc1e3ac0d6d3e91",
     "semantic_hash": ""
   },
   "extension/content.js": {
-    "mtime": 1792437845.4372902,
-    "seen": 1792439324.1281598,
-    "ast_hash": "66fbd1c6f36f36c24753c6156d52cd8a",
+    "mtime": 1792485980.6748588,
+    "seen": 1792501247.5660417,
+    "ast_hash": "6df2bc34dc1b334566e5de368ebab5bf",
     "semantic_hash": ""
   },
   "extension/injected.js": {
-    "mtime": 1792439170.8245533,
-    "seen": 1792439324.12817,
-    "ast_hash": "ab47d28f01b004ef1698789785dbd3c0",
+    "mtime": 1792500334.7175722,
+    "seen": 1792501247.5660515,
+    "ast_hash": "61794afea7a530040089473f5f1679ff",
     "semantic_hash": ""
   },
   "extension/manifest.json": {
@@ -24,15 +24,15 @@
     "semantic_hash": ""
   },
   "extension/popup.js": {
-    "mtime": 1792434774.780537,
-    "seen": 1792435167.4183369,
-    "ast_hash": "24579324d047eb45ad38b3c5cfcc7997",
+    "mtime": 1792472877.8665032,
+    "seen": 1792501247.566068,
+    "ast_hash": "8a76a3fa8ddf445b5992fab31b9f0eef",
     "semantic_hash": ""
   },
   "extension/slicer_core.js": {
-    "mtime": 1792438742.3257952,
-    "seen": 1792439324.1282005,
-    "ast_hash": "faad09940afc02cf4a1b948dcf89d928",
+    "mtime": 1792500163.4089644,
+    "seen": 1792501247.566073,
+    "ast_hash": "6896dec2fc1b0c3ba7f8ea431c7adca1",
     "semantic_hash": ""
   },
   "package.json": {
@@ -198,9 +198,9 @@
     "semantic_hash": ""
   },
   "tests/company_enrichment_queue.test.mjs": {
-    "mtime": 1792302744.9888117,
-    "seen": 1792424463.544345,
-    "ast_hash": "807688bcb381ea41a4eb913b02979817",
+    "mtime": 1792465495.941014,
+    "seen": 1792501247.5662553,
+    "ast_hash": "519076a2943b2eb4d6e3489f836fb3ab",
     "semantic_hash": ""
   },
   "tests/company_harvester.test.mjs": {
@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "tests/smart_batcher.test.mjs": {
-    "mtime": 1792264712.88182,
-    "seen": 1792424463.544374,
-    "ast_hash": "0280190f10db2fe16e1ea0872f646e77",
+    "mtime": 1792500431.5637672,
+    "seen": 1792501247.5663066,
+    "ast_hash": "8f53d84eb41c105cd27925830c6d0876",
     "semantic_hash": ""
   },
   ".agents/plans/bidirectional-org-enrichment.plan.md": {
@@ -563,18 +563,6 @@
     "ast_hash": "e4faeef3ebd1485990085fa3d4889be7",
     "semantic_hash": ""
   },
-  "scratch/test_bracket_metadata.mjs": {
-    "mtime": 1792438422.8394833,
-    "seen": 1792439324.1282156,
-    "ast_hash": "eda6ca9f97c1fa1fcbc4566203df08a9",
-    "semantic_hash": ""
-  },
-  "scratch/test_metadata_mode.mjs": {
-    "mtime": 1792438328.579373,
-    "seen": 1792439324.1282218,
-    "ast_hash": "db4088f9bef5e16bf565fa5921bc65bf",
-    "semantic_hash": ""
-  },
   "tests/dense_cabinet_harvest.test.mjs": {
     "mtime": 1792438641.1759987,
     "seen": 1792439324.1285121,
@@ -591,6 +579,48 @@
     "mtime": 1792435614.2542934,
     "seen": 1792439324.1286104,
     "ast_hash": "fc8c6b353072aef6d73b9a52c82125ed",
+    "semantic_hash": ""
+  },
+  "tests/dynamic_bisection.test.mjs": {
+    "mtime": 1792465218.4719274,
+    "seen": 1792501247.5662708,
+    "ast_hash": "99b33d82e21d48b9f644da95a30ed873",
+    "semantic_hash": ""
+  },
+  "tests/harvest_resumption.test.mjs": {
+    "mtime": 1792485980.6450572,
+    "seen": 1792501247.5662792,
+    "ast_hash": "e496c639ac650e610d2f2a7dd0d89eef",
+    "semantic_hash": ""
+  },
+  "tests/manifest_checkpoint.test.mjs": {
+    "mtime": 1792465236.0458748,
+    "seen": 1792501247.5662918,
+    "ast_hash": "e473854f7197a1c2c218af17d5716d88",
+    "semantic_hash": ""
+  },
+  "tests/multidimensional_bisection.test.mjs": {
+    "mtime": 1792497936.456225,
+    "seen": 1792501247.566299,
+    "ast_hash": "cff0106fc809f3e37ebfee02b923b134",
+    "semantic_hash": ""
+  },
+  ".claude/plans/adaptive-density-probe-and-minimal-cabinets.plan.md": {
+    "mtime": 1792499255.4129758,
+    "seen": 1792501247.5663397,
+    "ast_hash": "2de4a3beb0be74ad895cf1bcd665cb09",
+    "semantic_hash": ""
+  },
+  ".claude/plans/dynamic-bisection-and-throughput.plan.md": {
+    "mtime": 1792442570.6748848,
+    "seen": 1792501247.566343,
+    "ast_hash": "e2c292ac7178ef41f41999914e1ea4f7",
+    "semantic_hash": ""
+  },
+  ".claude/plans/resumable-harvest-and-csv-export.plan.md": {
+    "mtime": 1792472601.1135333,
+    "seen": 1792501247.566354,
+    "ast_hash": "dd3d28ee83885ea01b3fe9cf657a07c2",
     "semantic_hash": ""
   }
 }
