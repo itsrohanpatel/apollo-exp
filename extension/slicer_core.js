@@ -360,6 +360,66 @@ export function parseApolloUrlHash(urlOrHash = '') {
   return result;
 }
 
+// 8b. Apollo URL Hash Slice Builder
+export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = null, sortAsc = true) {
+  const qIdx = currentHash.indexOf('?');
+  const path = qIdx !== -1 ? currentHash.slice(0, qIdx) : '#/people';
+  const rawQuery = qIdx !== -1 ? currentHash.slice(qIdx + 1) : '';
+
+  const pairs = rawQuery.split('&').filter(Boolean);
+  const filteredPairs = [];
+
+  let bracketStr = null;
+  let seniority = null;
+  let emailStatus = null;
+  let personTitles = null;
+
+  if (typeof cabinetOrBracket === 'object' && cabinetOrBracket !== null) {
+    bracketStr = Array.isArray(cabinetOrBracket.bracket) ? cabinetOrBracket.bracket[0] : (cabinetOrBracket.label || null);
+    seniority = cabinetOrBracket.seniority || null;
+    emailStatus = cabinetOrBracket.emailStatus || null;
+  } else if (cabinetOrBracket) {
+    bracketStr = String(cabinetOrBracket);
+  }
+
+  for (const pair of pairs) {
+    const eq = pair.indexOf('=');
+    const key = eq !== -1 ? decodeURIComponent(pair.slice(0, eq)) : decodeURIComponent(pair);
+    if (
+      key !== 'page' &&
+      key !== 'organizationNumEmployeesRanges[]' &&
+      key !== 'organizationNumEmployeesRanges' &&
+      key !== 'sortByField' &&
+      key !== 'sortAscending' &&
+      key !== '_t' &&
+      (!seniority || (key !== 'personSeniorities[]' && key !== 'personSeniorities')) &&
+      (!emailStatus || (key !== 'contactEmailStatus[]' && key !== 'contactEmailStatus'))
+    ) {
+      filteredPairs.push(pair);
+    }
+  }
+
+  filteredPairs.push('page=1');
+  if (bracketStr) {
+    filteredPairs.push(`organizationNumEmployeesRanges[]=${encodeURIComponent(bracketStr)}`);
+  }
+  if (seniority) {
+    filteredPairs.push(`personSeniorities[]=${encodeURIComponent(seniority)}`);
+  }
+  if (Array.isArray(emailStatus)) {
+    for (const est of emailStatus) {
+      filteredPairs.push(`contactEmailStatus[]=${encodeURIComponent(est)}`);
+    }
+  }
+  if (sortField) {
+    filteredPairs.push(`sortByField=${encodeURIComponent(sortField)}`);
+    filteredPairs.push(`sortAscending=${String(sortAsc)}`);
+  }
+  filteredPairs.push(`_t=${Date.now()}`);
+
+  return `${path}?${filteredPairs.join('&')}`;
+}
+
 // 9. Universal Execution Plan Resolver (Extracts active search brackets or defaults to 10 universal brackets)
 export function resolveHarvestExecutionPlan(basePayload = {}) {
   const customRanges = basePayload.organization_num_employees_ranges;
@@ -824,6 +884,138 @@ export class SmartBatcher {
 }
 
 /**
+ * Dynamic Runtime Cabinet Subdivider
+ * Splits an overflowing cabinet (> 250 leads) into smaller reachable sub-cabinets.
+ * Slicing hierarchy (Strictly Zero Job Titles):
+ *  1. Headcount Bisection (if min < max)
+ *  2. Seniorities (if min === max and seniority is null)
+ *  3. Email Status (if min === max, seniority is set, and emailStatus is null)
+ */
+export function subdivideCabinet(cabinet = {}, totalEntries = 0, options = {}) {
+  const maxLimit = options.maxLeadsPerCabinet || 250;
+  if (!totalEntries || totalEntries <= maxLimit) {
+    return [cabinet];
+  }
+
+  const rawBracket = Array.isArray(cabinet.bracket) && cabinet.bracket.length > 0
+    ? cabinet.bracket[0]
+    : (cabinet.label || '');
+
+  let min = null;
+  let max = null;
+
+  if (typeof rawBracket === 'string') {
+    if (rawBracket === '10001') {
+      min = 10001;
+      max = 10001;
+    } else if (rawBracket.includes(',')) {
+      const parts = rawBracket.split(',').map(n => parseInt(n.trim(), 10));
+      min = parts[0];
+      max = parts[1] !== undefined ? parts[1] : parts[0];
+    } else {
+      const parsed = parseInt(rawBracket.trim(), 10);
+      if (!isNaN(parsed)) {
+        min = parsed;
+        max = parsed;
+      }
+    }
+  }
+
+  // Level 1: Headcount Bisection (if span has min < max)
+  if (typeof min === 'number' && typeof max === 'number' && min < max) {
+    const mid = Math.floor((min + max) / 2);
+    const leftBracket = `${min},${mid}`;
+    const rightBracket = `${mid + 1},${max}`;
+
+    const left = {
+      ...cabinet,
+      label: cabinet.seniority ? `${leftBracket} ${cabinet.seniority}` : leftBracket,
+      bracket: [leftBracket],
+      total: null,
+      mode: 'Bidirectional'
+    };
+
+    const right = {
+      ...cabinet,
+      label: cabinet.seniority ? `${rightBracket} ${cabinet.seniority}` : rightBracket,
+      bracket: [rightBracket],
+      total: null,
+      mode: 'Bidirectional'
+    };
+
+    return [left, right];
+  }
+
+  const baseFilters = options.baseFilters || {};
+  const userSeniorities = Array.isArray(baseFilters.person_seniorities) && baseFilters.person_seniorities.length > 0
+    ? baseFilters.person_seniorities
+    : null;
+  const userEmailStatuses = Array.isArray(baseFilters.contact_email_status) && baseFilters.contact_email_status.length > 0
+    ? baseFilters.contact_email_status
+    : null;
+
+  // Level 2: Seniority Partitioning (if single integer headcount and no seniority set)
+  // Strictly respects user-selected seniorities; never expands if user specified a single seniority
+  if (!cabinet.seniority && (!userSeniorities || userSeniorities.length > 1)) {
+    const seniorities = userSeniorities || (Array.isArray(options.seniorities) && options.seniorities.length > 0
+      ? options.seniorities
+      : [
+          'founder',
+          'owner',
+          'c_suite',
+          'partner',
+          'vp',
+          'head',
+          'director',
+          'manager',
+          'senior',
+          'entry',
+          'intern'
+        ]);
+
+    const bracketArr = [rawBracket || '10001'];
+    return seniorities.map(sen => ({
+      ...cabinet,
+      label: `${rawBracket || 'Headcount'} ${sen}`,
+      bracket: bracketArr,
+      seniority: sen,
+      total: null,
+      mode: 'Bidirectional'
+    }));
+  }
+
+  const effectiveSeniority = cabinet.seniority || (userSeniorities && userSeniorities.length === 1 ? userSeniorities[0] : null);
+
+  // Level 3: Email Status Partitioning (if single integer, seniority already set, and emailStatus null)
+  // Strictly respects user-selected email statuses; never expands if user specified a single status
+  if (!cabinet.emailStatus && (!userEmailStatuses || userEmailStatuses.length > 1)) {
+    const defaultPartitions = [
+      { key: 'verified', values: ['verified'] },
+      { key: 'guessed', values: ['guessed'] },
+      { key: 'unavailable', values: ['unavailable'] }
+    ];
+
+    const activePartitions = userEmailStatuses
+      ? defaultPartitions.filter(p => p.values.some(v => userEmailStatuses.includes(v)))
+      : defaultPartitions;
+
+    if (activePartitions.length > 1) {
+      return activePartitions.map(ep => ({
+        ...cabinet,
+        label: effectiveSeniority ? `${rawBracket} ${effectiveSeniority} ${ep.key}` : `${cabinet.label || rawBracket} ${ep.key}`,
+        seniority: effectiveSeniority,
+        emailStatus: ep.values,
+        total: null,
+        mode: 'Bidirectional'
+      }));
+    }
+  }
+
+  // Fallback: Leaf granularity reached (preserves all user criteria)
+  return [cabinet];
+}
+
+/**
  * Coalesce Sparse Ranges (Standalone Function)
  * Optimal bin-packing of adjacent contiguous micro-ranges into <= maxLimit cabinets
  */
@@ -1154,6 +1346,7 @@ export const PREFERRED_PERSON_COLUMNS = [
   'past_companies',
   'past_titles',
   'email',
+  'extrapolated_email',
   'email_status',
   'phone',
   'linkedin_url',
@@ -1219,6 +1412,15 @@ export const PREFERRED_COMPANY_COLUMNS = [
   'scraped_at'
 ];
 
+export function synthesizeProbableEmail(firstName = '', lastName = '', domain = '') {
+  const f = (firstName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const l = (lastName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const d = (domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  
+  if (!f || !l || !d || !d.includes('.')) return '';
+  return `${f}.${l}@${d}`;
+}
+
 export function normalizePersonComprehensive(raw) {
   if (!raw || typeof raw !== 'object') return {};
   const org = raw.organization || {};
@@ -1238,6 +1440,10 @@ export function normalizePersonComprehensive(raw) {
 
   const fundingVal = org.total_funding_printed || org.total_funding || '';
 
+  const cleanOrgDomain = org.primary_domain || org.website_url || '';
+  const isEmailLocked = !raw.email || raw.email.includes('email_not_unlocked');
+  const extrapolated = !isEmailLocked ? raw.email : (raw.extrapolated_email || synthesizeProbableEmail(raw.first_name, raw.last_name, cleanOrgDomain));
+
   const base = {
     id: raw.id || '',
     first_name: raw.first_name || '',
@@ -1250,6 +1456,7 @@ export function normalizePersonComprehensive(raw) {
     past_companies: exp.past_companies,
     past_titles: exp.past_titles,
     email: raw.email || '',
+    extrapolated_email: extrapolated,
     email_status: raw.email_status || (raw.email ? 'verified' : 'unrevealed'),
     phone: raw.phone_numbers?.[0]?.raw_number || org.phone || org.primary_phone?.number || '',
     linkedin_url: raw.linkedin_url || '',
@@ -2239,7 +2446,9 @@ export function generateMultiDimensionalPlan(basePayload = {}, options = {}) {
 
     const seniorities = Array.isArray(options.seniorities) && options.seniorities.length > 0
       ? options.seniorities
-      : ALL_APOLLO_SENIORITIES;
+      : (Array.isArray(basePayload.person_seniorities) && basePayload.person_seniorities.length > 0
+          ? basePayload.person_seniorities
+          : ALL_APOLLO_SENIORITIES);
 
     for (const sen of seniorities) {
       // Low volume seniorities (C-Suite, VP, Director, Head, Partner, Intern, Founder, Owner)
@@ -2299,9 +2508,11 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     throw new Error('probeFn must be an async function returning total_entries count');
   }
 
-  const maxLimit = options.maxLeadsPerCabinet || 250;
+  const maxLimit = options.maxLeadsPerCabinet !== undefined ? options.maxLeadsPerCabinet : 125;
   const isCompanies = options.isCompanies || false;
   const onProbeProgress = options.onProbeProgress || null;
+  const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : null;
+  const probePacing = options.probePacing || {};
   const optimalUnits = [];
 
   let startingBrackets = [];
@@ -2351,9 +2562,27 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     const rootTotal = await probeFn({ organization_num_employees_ranges: customRanges });
     if (onProbeProgress) onProbeProgress({ type: 'ROOT_PROBE', total: rootTotal });
     if (rootTotal === 0) {
+      if (sleepFn) {
+        const delayMs = calculateProbePacingDelay({ isZeroResult: true, ...probePacing });
+        if (onProbeProgress) onProbeProgress({ type: 'ZERO_RESULT_DWELL', label: 'ROOT', delayMs });
+        await sleepFn(delayMs);
+      }
       return [];
     }
-    if (rootTotal <= maxLimit) {
+    if (rootTotal === null || rootTotal === undefined) {
+      // Probing is blocked (e.g. Cloudflare Turnstile). Immediately return starting brackets in Bidirectional mode!
+      return startingBrackets.map(b => ({
+        label: b.label,
+        bracket: [b.label],
+        seniority: null,
+        emailStatus: null,
+        keyword: null,
+        total: null,
+        pagesNeeded: 5,
+        mode: 'Bidirectional'
+      }));
+    }
+    if (typeof rootTotal === 'number' && rootTotal > 0 && rootTotal <= maxLimit) {
       const singleLabel = Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0]);
       return [{
         label: `${singleLabel} (All Matching)`,
@@ -2376,10 +2605,48 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     if (onProbeProgress) onProbeProgress({ type: 'BRACKET_PROBE', label: item.label, total: count });
 
     if (count === 0) {
+      if (sleepFn) {
+        const delayMs = calculateProbePacingDelay({ isZeroResult: true, ...probePacing });
+        if (onProbeProgress) onProbeProgress({ type: 'ZERO_RESULT_DWELL', label: item.label, delayMs });
+        await sleepFn(delayMs);
+      }
       continue;
     }
 
-    if (count <= maxLimit) {
+    if (count === null || count === undefined) {
+      // Probe unavailable / Cloudflare protected - add all remaining brackets as executable in Bidirectional mode
+      optimalUnits.push({
+        label: item.label,
+        bracket: [item.label],
+        seniority: null,
+        emailStatus: null,
+        keyword: null,
+        total: null,
+        pagesNeeded: 5,
+        mode: 'Bidirectional'
+      });
+      while (queue.length > 0) {
+        const rem = queue.shift();
+        optimalUnits.push({
+          label: rem.label,
+          bracket: [rem.label],
+          seniority: null,
+          emailStatus: null,
+          keyword: null,
+          total: null,
+          pagesNeeded: 5,
+          mode: 'Bidirectional'
+        });
+      }
+      break;
+    }
+
+    if (sleepFn) {
+      const delayMs = calculateProbePacingDelay({ isZeroResult: false, ...probePacing });
+      await sleepFn(delayMs);
+    }
+
+    if (typeof count === 'number' && count <= maxLimit) {
       optimalUnits.push({
         label: item.label,
         bracket: [item.label],
@@ -2393,8 +2660,8 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       continue;
     }
 
-    // Bisect headcount if span >= 5 and min < max
-    if (item.max - item.min >= 5 && item.min < item.max) {
+    // Bisect headcount whenever min < max
+    if (item.min < item.max) {
       const mid = Math.floor((item.min + item.max) / 2);
       const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
       const right = { min: mid + 1, max: item.max, label: `${mid + 1},${item.max}` };
@@ -2437,7 +2704,19 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       });
       if (onProbeProgress) onProbeProgress({ type: 'SENIORITY_PROBE', label: `${item.label} ${sen}`, total: senCount });
 
-      if (senCount === 0) continue;
+      if (senCount === 0) {
+        if (sleepFn) {
+          const delayMs = calculateProbePacingDelay({ isZeroResult: true, ...probePacing });
+          if (onProbeProgress) onProbeProgress({ type: 'ZERO_RESULT_DWELL', label: `${item.label} ${sen}`, delayMs });
+          await sleepFn(delayMs);
+        }
+        continue;
+      }
+
+      if (sleepFn) {
+        const delayMs = calculateProbePacingDelay({ isZeroResult: false, ...probePacing });
+        await sleepFn(delayMs);
+      }
 
       if (senCount <= maxLimit) {
         optimalUnits.push({
@@ -2453,8 +2732,13 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         continue;
       }
 
-      // If dense seniority still exceeds maxLimit: Pivot to 3-way Email Status
-      for (const emailPartition of EMAIL_STATUS_PARTITIONS) {
+      // If dense seniority still exceeds maxLimit: Pivot to Email Status (respecting any user-pinned status)
+      const userEmailStatus = basePayload.contact_email_status || null;
+      const activeEmailPartitions = userEmailStatus && userEmailStatus.length > 0
+        ? EMAIL_STATUS_PARTITIONS.filter(p => p.values.some(v => userEmailStatus.includes(v)))
+        : EMAIL_STATUS_PARTITIONS;
+
+      for (const emailPartition of activeEmailPartitions) {
         const emailCount = await probeFn({
           organization_num_employees_ranges: [item.label],
           person_seniorities: [sen],
@@ -2462,7 +2746,19 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         });
         if (onProbeProgress) onProbeProgress({ type: 'EMAIL_PROBE', label: `${item.label} ${sen} ${emailPartition.key}`, total: emailCount });
 
-        if (emailCount === 0) continue;
+        if (emailCount === 0) {
+          if (sleepFn) {
+            const delayMs = calculateProbePacingDelay({ isZeroResult: true, ...probePacing });
+            if (onProbeProgress) onProbeProgress({ type: 'ZERO_RESULT_DWELL', label: `${item.label} ${sen} ${emailPartition.key}`, delayMs });
+            await sleepFn(delayMs);
+          }
+          continue;
+        }
+
+        if (sleepFn) {
+          const delayMs = calculateProbePacingDelay({ isZeroResult: false, ...probePacing });
+          await sleepFn(delayMs);
+        }
 
         optimalUnits.push({
           label: `${item.label} ${sen} ${emailPartition.key}`,
@@ -2480,4 +2776,69 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
 
   return optimalUnits;
 }
+
+// 25. Pre-flight Probe Pacing & Humanized Dwell Calculator
+export function calculateProbePacingDelay(options = {}) {
+  const {
+    isZeroResult = false,
+    minDelay = 1200,
+    maxDelay = 2400,
+    zeroMinDelay = 900,
+    zeroMaxDelay = 1800
+  } = options;
+
+  if (isZeroResult) {
+    const min = Math.max(200, zeroMinDelay);
+    const max = Math.max(min, zeroMaxDelay);
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  const min = Math.max(300, minDelay);
+  const max = Math.max(min, maxDelay);
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// 26. Pre-flight Session Clearance & CSRF Validator
+export function validateSessionHealth(cookieString = '') {
+  const hasCsrf = typeof cookieString === 'string' && /X-CSRF-TOKEN=/i.test(cookieString);
+  const hasClearance = typeof cookieString === 'string' && /cf_clearance=/i.test(cookieString);
+  const isHealthy = hasCsrf && hasClearance;
+
+  return {
+    isHealthy,
+    hasCsrf,
+    hasClearance,
+    status: isHealthy ? 'READY' : (!hasClearance ? 'CLEARANCE_REQUIRED' : 'CSRF_MISSING')
+  };
+}
+
+// 27. Companion Organization Snippet Merger
+export function mergeSnippetEnrichment(contacts = [], snippetMap = {}) {
+  if (!Array.isArray(contacts)) return [];
+  const safeMap = snippetMap && typeof snippetMap === 'object' ? snippetMap : {};
+
+  return contacts.map(c => {
+    if (!c || typeof c !== 'object') return c;
+    const orgId = c.organization_id || c.organization?.id;
+    const snippet = orgId ? safeMap[orgId] : null;
+
+    if (!snippet) {
+      return { ...c };
+    }
+
+    return {
+      ...c,
+      organization: {
+        ...(c.organization || {}),
+        short_description: snippet.short_description !== undefined ? snippet.short_description : c.organization?.short_description,
+        corporate_phone: snippet.phone !== undefined ? snippet.phone : c.organization?.corporate_phone,
+        keywords: Array.isArray(snippet.keywords) ? snippet.keywords : c.organization?.keywords,
+        industry: snippet.industry !== undefined ? snippet.industry : c.organization?.industry,
+        annual_revenue_printed: snippet.annual_revenue_printed !== undefined ? snippet.annual_revenue_printed : c.organization?.annual_revenue_printed,
+        total_funding_printed: snippet.total_funding_printed !== undefined ? snippet.total_funding_printed : c.organization?.total_funding_printed
+      }
+    };
+  });
+}
+
 

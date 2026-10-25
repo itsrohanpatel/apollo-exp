@@ -174,4 +174,183 @@ describe('SmartBatcher: Autonomous Adaptive Cabinet Sizer Engine', () => {
     assert.ok(managerVerified);
     assert.equal(managerVerified.total, 200);
   });
+
+  it('resolveAdaptiveExecutionTree bisects tight bracket 21,24 (210 leads) into sub-125 units', async () => {
+    const { resolveAdaptiveExecutionTree } = await import('../extension/slicer_core.js');
+
+    const density = {
+      '21,24': 210,
+      '21,22': 105,
+      '23,24': 105
+    };
+
+    const mockProbe = async (filters) => {
+      const b = filters.organization_num_employees_ranges?.[0];
+      return density[b] ?? 0;
+    };
+
+    const units = await resolveAdaptiveExecutionTree(mockProbe, {
+      organization_num_employees_ranges: ['21,24']
+    }, { maxLeadsPerCabinet: 125 });
+
+    assert.equal(units.length, 2);
+    assert.deepEqual(units.map(u => u.bracket[0]), ['21,22', '23,24']);
+    assert.equal(units[0].total, 105);
+    assert.equal(units[1].total, 105);
+    assert.ok(units.every(u => u.total <= 125));
+  });
+
+  it('buildHashForSlice builds authentic A-Z and Z-A company sorted URLs', async () => {
+    const { buildHashForSlice } = await import('../extension/slicer_core.js');
+
+    const baseHash = '#/people?personSeniorities[]=c_suite&personLocations[]=Ahmedabad%2C%20Gujarat%2C%20India&organizationNumEmployeesRanges[]=50%2C&page=1';
+
+    // Pass 1: Ascending A -> Z
+    const hashPass1 = buildHashForSlice(baseHash, '51,54', 'sanitized_organization_name_unanalyzed', true);
+    assert.ok(hashPass1.includes('organizationNumEmployeesRanges[]=51%2C54'));
+    assert.ok(hashPass1.includes('sortByField=sanitized_organization_name_unanalyzed'));
+    assert.ok(hashPass1.includes('sortAscending=true'));
+    assert.ok(hashPass1.includes('page=1'));
+    assert.ok(!hashPass1.includes('organizationNumEmployeesRanges[]=50%2C'));
+
+    // Pass 2: Descending Z -> A
+    const hashPass2 = buildHashForSlice(baseHash, '51,54', 'sanitized_organization_name_unanalyzed', false);
+    assert.ok(hashPass2.includes('sortAscending=false'));
+
+    // Cabinet with seniority & emailStatus
+    const cabinetObj = {
+      label: '10001 c_suite verified',
+      bracket: ['10001'],
+      seniority: 'c_suite',
+      emailStatus: ['verified']
+    };
+    const hashCabinet = buildHashForSlice(baseHash, cabinetObj, 'sanitized_organization_name_unanalyzed', true);
+    assert.ok(hashCabinet.includes('organizationNumEmployeesRanges[]=10001'));
+    assert.ok(hashCabinet.includes('contactEmailStatus[]=verified'));
+    assert.ok(hashCabinet.includes('sortByField=sanitized_organization_name_unanalyzed'));
+  });
+
+  it('subdivideCabinet bisects headcount range [151,200] into [151,175] and [176,200] when totalEntries > 250', async () => {
+    const { subdivideCabinet } = await import('../extension/slicer_core.js');
+
+    const oversized = {
+      label: '151,200',
+      bracket: ['151,200'],
+      seniority: null,
+      emailStatus: null,
+      mode: 'Bidirectional'
+    };
+
+    const subs = subdivideCabinet(oversized, 457);
+    assert.equal(subs.length, 2);
+    assert.equal(subs[0].bracket[0], '151,175');
+    assert.equal(subs[1].bracket[0], '176,200');
+    assert.equal(subs[0].label, '151,175');
+    assert.equal(subs[1].label, '176,200');
+    assert.equal(subs[0].mode, 'Bidirectional');
+    assert.equal(subs[1].mode, 'Bidirectional');
+  });
+
+  it('subdivideCabinet returns original cabinet unchanged if totalEntries <= 250', async () => {
+    const { subdivideCabinet } = await import('../extension/slicer_core.js');
+
+    const fitting = {
+      label: '51,60',
+      bracket: ['51,60'],
+      total: 180
+    };
+
+    const subs = subdivideCabinet(fitting, 180);
+    assert.equal(subs.length, 1);
+    assert.equal(subs[0].label, '51,60');
+  });
+
+  it('subdivideCabinet pivots single integer bracket > 250 to 11 Apollo native seniorities without job titles', async () => {
+    const { subdivideCabinet } = await import('../extension/slicer_core.js');
+
+    const singleIntCabinet = {
+      label: '130,130',
+      bracket: ['130,130'],
+      seniority: null,
+      emailStatus: null
+    };
+
+    const subs = subdivideCabinet(singleIntCabinet, 600);
+    assert.equal(subs.length, 11);
+    assert.ok(subs.every(s => s.bracket[0] === '130,130'));
+    assert.ok(subs.every(s => typeof s.seniority === 'string'));
+    assert.ok(subs.every(s => !s.keyword && !s.title && !s.personTitles)); // Zero job titles!
+  });
+
+  it('subdivideCabinet pivots single integer with seniority to 3 email status partitions', async () => {
+    const { subdivideCabinet } = await import('../extension/slicer_core.js');
+
+    const singleIntSeniority = {
+      label: '130,130 manager',
+      bracket: ['130,130'],
+      seniority: 'manager',
+      emailStatus: null
+    };
+
+    const subs = subdivideCabinet(singleIntSeniority, 350);
+    assert.equal(subs.length, 3);
+    assert.deepEqual(subs.map(s => s.emailStatus[0]), ['verified', 'guessed', 'unavailable']);
+  });
+
+  it('subdivideCabinet strictly preserves user-pinned email status and never expands to other email statuses', async () => {
+    const { subdivideCabinet } = await import('../extension/slicer_core.js');
+
+    const singleIntSeniority = {
+      label: '130,130 manager',
+      bracket: ['130,130'],
+      seniority: 'manager',
+      emailStatus: null
+    };
+
+    // User filtered exclusively for unavailable emails
+    const baseFilters = {
+      contact_email_status: ['unavailable'],
+      person_locations: ['Ahmedabad, Gujarat, India'],
+      person_department_or_subdepartments: ['master_human_resources']
+    };
+
+    const subs = subdivideCabinet(singleIntSeniority, 350, { baseFilters });
+    // Must NOT expand to verified/guessed because user locked to unavailable!
+    assert.equal(subs.length, 1);
+    assert.equal(subs[0].label, '130,130 manager');
+  });
+
+  it('subdivideCabinet strictly preserves user-pinned seniority and never expands to other seniorities', async () => {
+    const { subdivideCabinet } = await import('../extension/slicer_core.js');
+
+    const singleIntCabinet = {
+      label: '130,130',
+      bracket: ['130,130'],
+      seniority: null,
+      emailStatus: null
+    };
+
+    // User filtered exclusively for C-Suite
+    const baseFilters = {
+      person_seniorities: ['c_suite'],
+      person_locations: ['Ahmedabad, Gujarat, India']
+    };
+
+    const subs = subdivideCabinet(singleIntCabinet, 600, { baseFilters });
+    // Must NOT expand to other seniorities (entry, manager, intern, etc.)!
+    // It partitions by email status while strictly keeping c_suite:
+    assert.equal(subs.length, 3);
+    assert.ok(subs.every(s => s.seniority === 'c_suite'));
+
+    // When BOTH seniority AND email status are locked by the user:
+    const lockedSubs = subdivideCabinet(singleIntCabinet, 600, {
+      baseFilters: {
+        person_seniorities: ['c_suite'],
+        contact_email_status: ['unavailable']
+      }
+    });
+    // Cannot split without violating user criteria, so returns 1
+    assert.equal(lockedSubs.length, 1);
+  });
 });
+

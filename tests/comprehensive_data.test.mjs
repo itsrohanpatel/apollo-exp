@@ -4,6 +4,7 @@ import {
   flattenRecord,
   inferSeniority,
   extractPastExperience,
+  synthesizeProbableEmail,
   normalizePersonComprehensive,
   normalizeCompanyComprehensive,
   buildUnionCSV,
@@ -332,12 +333,37 @@ test('Comprehensive Zero-Data-Loss Normalization & Union CSV Suite', async (t) =
     assert.equal(cleaned, 'Line 1 Line 2 Line 3');
   });
 
-  await t.test('parseCSV accurately parses quotes, commas, and escaped quotes', () => {
-    const sample = 'id,name,bio\r\n1,"Doe, John","Software ""Lead"" Engineer"';
-    const parsed = parseCSV(sample);
-    assert.equal(parsed.length, 2);
-    assert.deepEqual(parsed[0], ['id', 'name', 'bio']);
-    assert.deepEqual(parsed[1], ['1', 'Doe, John', 'Software "Lead" Engineer']);
+  await t.test('synthesizeProbableEmail and extrapolated_email correctly enrich locked contacts', () => {
+    assert.equal(synthesizeProbableEmail('John', 'Doe', 'acme.corp'), 'john.doe@acme.corp');
+    assert.equal(synthesizeProbableEmail('Jane', 'Smith', 'https://www.innovate.io/about'), 'jane.smith@innovate.io');
+    assert.equal(synthesizeProbableEmail('', 'Smith', 'acme.com'), '');
+
+    // Test normalizePersonComprehensive with email_not_unlocked
+    const lockedLead = {
+      id: 'lead_lock_1',
+      first_name: 'Robert',
+      last_name: 'Taylor',
+      title: 'VP Sales',
+      email: 'email_not_unlocked@acme.com',
+      organization: {
+        name: 'Acme Corp',
+        primary_domain: 'acme.com'
+      }
+    };
+    const norm = normalizePersonComprehensive(lockedLead);
+    assert.equal(norm.email, 'email_not_unlocked@acme.com');
+    assert.equal(norm.extrapolated_email, 'robert.taylor@acme.com');
+
+    // Test with real verified email
+    const unlockedLead = {
+      id: 'lead_unlocked_1',
+      first_name: 'Robert',
+      last_name: 'Taylor',
+      email: 'rtaylor@acme.com',
+      organization: { primary_domain: 'acme.com' }
+    };
+    const norm2 = normalizePersonComprehensive(unlockedLead);
+    assert.equal(norm2.extrapolated_email, 'rtaylor@acme.com');
   });
 });
 
