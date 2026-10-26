@@ -317,23 +317,118 @@ export function parseApolloUrlHash(urlOrHash = '') {
     'notOrganizationIndustryTagIds[]': 'not_organization_industry_tag_ids',
     'personNotSeniorities[]': 'person_not_seniorities',
     'currentlyUsingAnyOfTechnologyUids[]': 'currently_using_any_of_technology_uids',
-    'latestFundingStageCd[]': 'latest_funding_stage_cd'
+    'latestFundingStageCd[]': 'latest_funding_stage_cd',
+
+    // --- EXPANDED FILTERS ---
+    // Target Work URLs / Company Domains & LinkedIn URLs
+    'organizationDomains[]': 'organization_domains',
+    'qOrganizationDomains[]': 'organization_domains',
+    'organizationNotDomains[]': 'organization_not_domains',
+    'qNotOrganizationDomains[]': 'organization_not_domains',
+    'organizationLinkedinUrls[]': 'organization_linkedin_urls',
+    'qOrganizationLinkedinUrls[]': 'organization_linkedin_urls',
+    'organizationNotLinkedinUrls[]': 'organization_not_linkedin_urls',
+    'personLinkedinUrls[]': 'person_linkedin_urls',
+    'qPersonLinkedinUrls[]': 'person_linkedin_urls',
+    'personNotLinkedinUrls[]': 'person_not_linkedin_urls',
+
+    // Department Exclusions
+    'personNotDepartmentOrSubdepartments[]': 'person_not_department_or_subdepartments',
+    'personNotDepartments[]': 'person_not_department_or_subdepartments',
+
+    // Specific Company / Account IDs (Inclusion & Exclusion)
+    'organizationIds[]': 'organization_ids',
+    'organizationNotIds[]': 'organization_not_ids',
+
+    // Modern Technologies (By Name & UIDs) & Exclusions
+    'organizationTechnologyNames[]': 'organization_technology_names',
+    'organizationNotTechnologyNames[]': 'organization_not_technology_names',
+    'currentlyUsingAllOfTechnologyUids[]': 'currently_using_all_of_technology_uids',
+    'currentlyUsingNoneOfTechnologyUids[]': 'currently_using_none_of_technology_uids',
+
+    // Modern Funding Stages
+    'organizationLatestFundingStageRanges[]': 'organization_latest_funding_stage_ranges',
+
+    // Revenue Ranges (Bracket string format, e.g. 1000000%2C10000000)
+    'organizationRevenueRanges[]': 'organization_revenue_ranges',
+
+    // Job Change & Hiring Postings
+    'organizationJobPostingTitles[]': 'organization_job_posting_titles',
+    'organizationJobPostingLocations[]': 'organization_job_posting_locations',
+    'organizationHeadcountGrowthRanges[]': 'organization_headcount_growth_ranges',
+
+    // Buying Intent Signals
+    'organizationIntentTopicIds[]': 'organization_intent_topic_ids',
+    'organizationIntentStrength[]': 'organization_intent_strength',
+
+    // Education, Degrees & Majors
+    'personEducations[]': 'person_educations',
+    'personDegreeTypes[]': 'person_degree_types',
+    'personDegreeNames[]': 'person_degree_names',
+    'personMajorNames[]': 'person_major_names',
+
+    // Lookalikes & Market Segments
+    'organizationLookalikeOrgIds[]': 'organization_lookalike_org_ids',
+    'marketSegments[]': 'market_segments',
+
+    // Phone & Email Status Filters
+    'contactPhoneStatus[]': 'contact_phone_status',
+    'contactPhoneStatusV2[]': 'contact_phone_status_v2',
+    'contactDirectPhoneStatus[]': 'contact_direct_phone_status',
+    'contactMobilePhoneStatus[]': 'contact_mobile_phone_status',
+    'emailStatus[]': 'contact_email_status',
+    'contactEmailStatusV2[]': 'contact_email_status_v2',
+
+    // CRM / Saved Status Filters
+    'prospectedByCurrentTeam[]': 'prospected_by_current_team',
+    'contactStageIds[]': 'contact_stage_ids',
+    'contactStages[]': 'contact_stages',
+    'accountStages[]': 'account_stages',
+    'ownerIds[]': 'owner_ids',
+    'labelIds[]': 'label_ids',
+    'sequenceIds[]': 'sequence_ids',
+    'accountTier[]': 'account_tier'
   };
 
   const stringMappings = {
     'qKeywords': 'q_keywords',
+    'qNotKeywords': 'q_not_keywords',
     'qOrganizationName': 'q_organization_name',
     'personName': 'person_name',
-    'recommendationConfigId': 'recommendation_config_id'
+    'recommendationConfigId': 'recommendation_config_id',
+    'personaId': 'persona_id',
+    'jobChange': 'job_change',
+    'salesforceRecordId': 'salesforce_record_id',
+    'hubspotRecordId': 'hubspot_record_id'
   };
 
   for (const [paramKey, apiKey] of Object.entries(arrayMappings)) {
     const baseKey = paramKey.replace('[]', '');
     const valsWithBrackets = params.getAll(paramKey);
     const valsWithout = params.getAll(baseKey);
-    const combined = [...valsWithBrackets, ...valsWithout];
+    
+    // Also capture indexed array parameters like personTitles[0], personTitles[1]
+    const indexedVals = [];
+    const escapedBase = baseKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const indexedRegex = new RegExp('^' + escapedBase + '\\[\\d+\\]$');
+    for (const [k, v] of params.entries()) {
+      if (indexedRegex.test(k)) {
+        indexedVals.push(v);
+      }
+    }
+
+    const combined = [...valsWithBrackets, ...valsWithout, ...indexedVals];
     if (combined.length > 0) {
-      result[apiKey] = combined;
+      let cleaned = Array.from(new Set(combined));
+      if (
+        apiKey === 'organization_linkedin_urls' ||
+        apiKey === 'organization_not_linkedin_urls' ||
+        apiKey === 'person_linkedin_urls' ||
+        apiKey === 'person_not_linkedin_urls'
+      ) {
+        cleaned = cleaned.map(u => typeof u === 'string' ? u.trim().replace(/\s+href$/i, '') : u).filter(Boolean);
+      }
+      result[apiKey] = cleaned;
     }
   }
 
@@ -349,12 +444,27 @@ export function parseApolloUrlHash(urlOrHash = '') {
   const sortAsc = params.get('sortAscending');
   if (sortAsc !== null) result.sort_ascending = sortAsc === 'true';
 
-  const revMin = params.get('revenueRange[min]') || params.get('revenueRange.min');
-  const revMax = params.get('revenueRange[max]') || params.get('revenueRange.max');
-  if (revMin || revMax) {
-    result.revenue_range = {};
-    if (revMin) result.revenue_range.min = parseInt(revMin, 10);
-    if (revMax) result.revenue_range.max = parseInt(revMax, 10);
+  // Sub-Property Nested Ranges (e.g. personDaysInCurrentTitleRange[max]=90)
+  const nestedRangeMappings = {
+    'personDaysInCurrentTitleRange': 'person_days_in_current_title_range',
+    'personDaysInCurrentCompanyRange': 'person_days_in_current_company_range',
+    'personTotalYearsExperience': 'person_total_years_experience',
+    'lastActivityDate': 'last_activity_date',
+    'revenueRange': 'revenue_range',
+    'organizationFoundedYearRange': 'organization_founded_year_range',
+    'organizationOpenPositionsCountRange': 'organization_open_positions_count_range',
+    'organizationLatestFundingAmountRange': 'organization_latest_funding_amount_range',
+    'organizationTotalFundingAmountRange': 'organization_total_funding_amount_range'
+  };
+
+  for (const [urlPrefix, apiKey] of Object.entries(nestedRangeMappings)) {
+    const minVal = params.get(urlPrefix + '[min]') || params.get(urlPrefix + '.min');
+    const maxVal = params.get(urlPrefix + '[max]') || params.get(urlPrefix + '.max');
+    if (minVal !== null || maxVal !== null) {
+      result[apiKey] = result[apiKey] || {};
+      if (minVal !== null) result[apiKey].min = isNaN(minVal) ? minVal : Number(minVal);
+      if (maxVal !== null) result[apiKey].max = isNaN(maxVal) ? maxVal : Number(maxVal);
+    }
   }
 
   return result;
@@ -375,7 +485,7 @@ export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = nul
   let personTitles = null;
 
   if (typeof cabinetOrBracket === 'object' && cabinetOrBracket !== null) {
-    bracketStr = Array.isArray(cabinetOrBracket.bracket) ? cabinetOrBracket.bracket[0] : (cabinetOrBracket.label || null);
+    bracketStr = Array.isArray(cabinetOrBracket.bracket) ? cabinetOrBracket.bracket[0] : (cabinetOrBracket.bracket || null);
     seniority = cabinetOrBracket.seniority || null;
     emailStatus = cabinetOrBracket.emailStatus || null;
   } else if (cabinetOrBracket) {
@@ -2557,19 +2667,38 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     ];
   }
 
-  // Short-Circuit Check: If search has an overall range filter, probe the whole search root first
-  if (customRanges && customRanges.length === 1) {
-    const rootTotal = await probeFn({ organization_num_employees_ranges: customRanges });
+  // Short-Circuit Check: If search has <= maxLimit * 2 leads, execute as 1 single cabinet!
+  let rootTotal = options.initialTotal !== undefined ? options.initialTotal : null;
+  if (rootTotal === null && (!customRanges || customRanges.length <= 1)) {
+    rootTotal = await probeFn(customRanges && customRanges.length === 1 ? { organization_num_employees_ranges: customRanges } : {});
     if (onProbeProgress) onProbeProgress({ type: 'ROOT_PROBE', total: rootTotal });
-    if (rootTotal === 0) {
-      if (sleepFn) {
-        const delayMs = calculateProbePacingDelay({ isZeroResult: true, ...probePacing });
-        if (onProbeProgress) onProbeProgress({ type: 'ZERO_RESULT_DWELL', label: 'ROOT', delayMs });
-        await sleepFn(delayMs);
-      }
-      return [];
+  }
+
+  if (rootTotal === 0) {
+    if (sleepFn) {
+      const delayMs = calculateProbePacingDelay({ isZeroResult: true, ...probePacing });
+      if (onProbeProgress) onProbeProgress({ type: 'ZERO_RESULT_DWELL', label: 'ROOT', delayMs });
+      await sleepFn(delayMs);
     }
-    if (rootTotal === null || rootTotal === undefined) {
+    return [];
+  }
+
+  if (typeof rootTotal === 'number' && rootTotal > 0 && (rootTotal <= maxLimit || (options.initialTotal !== undefined && rootTotal <= 250))) {
+    const singleLabel = customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0])) : 'All Matching Leads';
+    return [{
+      label: singleLabel.includes('All Matching') ? singleLabel : `${singleLabel} (All Matching)`,
+      bracket: customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0] : [String(customRanges[0])]) : null,
+      seniority: null,
+      emailStatus: null,
+      keyword: null,
+      total: rootTotal,
+      pagesNeeded: Math.min(5, Math.ceil(rootTotal / 25)),
+      mode: rootTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
+    }];
+  }
+
+  if (rootTotal === null || rootTotal === undefined) {
+    if (customRanges && customRanges.length === 1) {
       // Probing is blocked (e.g. Cloudflare Turnstile). Immediately return starting brackets in Bidirectional mode!
       return startingBrackets.map(b => ({
         label: b.label,
@@ -2581,19 +2710,6 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         pagesNeeded: 5,
         mode: 'Bidirectional'
       }));
-    }
-    if (typeof rootTotal === 'number' && rootTotal > 0 && rootTotal <= maxLimit) {
-      const singleLabel = Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0]);
-      return [{
-        label: `${singleLabel} (All Matching)`,
-        bracket: [singleLabel],
-        seniority: null,
-        emailStatus: null,
-        keyword: null,
-        total: rootTotal,
-        pagesNeeded: Math.ceil(rootTotal / 25),
-        mode: rootTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
-      }];
     }
   }
 

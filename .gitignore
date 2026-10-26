@@ -38,3 +38,6 @@ graphify-out/cache/
 Thumbs.db
 desktop.ini
 
+# Claude / Agent configs
+.claude/
+

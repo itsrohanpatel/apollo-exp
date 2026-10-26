@@ -131,6 +131,17 @@
         page: 1,
         per_page: 25
       };
+      if (basePayload.organization_linkedin_urls) {
+        fullPayload.organization_linkedin_urls = basePayload.organization_linkedin_urls;
+        fullPayload.q_organization_linkedin_urls = basePayload.organization_linkedin_urls;
+      }
+      if (basePayload.person_linkedin_urls) {
+        fullPayload.person_linkedin_urls = basePayload.person_linkedin_urls;
+        fullPayload.q_person_linkedin_urls = basePayload.person_linkedin_urls;
+      }
+      if (basePayload.person_not_linkedin_urls) {
+        fullPayload.person_not_linkedin_urls = basePayload.person_not_linkedin_urls;
+      }
 
       const timer = setTimeout(() => {
         if (activeProbeResolvers.has(requestId)) {
@@ -191,11 +202,29 @@
     const baseFilters = parseApolloUrlHash(currentHash);
     const targetLeadLimit = config.targetLeadLimit || 10000;
 
+    // Extract current visible total leads from DOM if present
+    let initialTotal = null;
+    try {
+      const totalEl = document.querySelector('[data-cy="finder-total-records"]');
+      if (totalEl) {
+        const n = parseInt(totalEl.innerText.replace(/,/g, '').trim(), 10);
+        if (!isNaN(n)) initialTotal = n;
+      }
+      if (initialTotal === null) {
+        const textMatch = document.body.innerText.match(/\d+\s*(?:to|-)\s*\d+\s*of\s*([\d,]+)/i);
+        if (textMatch && textMatch[1]) {
+          const n = parseInt(textMatch[1].replace(/,/g, '').trim(), 10);
+          if (!isNaN(n)) initialTotal = n;
+        }
+      }
+    } catch (e) {}
+
     let cabinets = [];
     try {
       hud.setStatus('🔍 Probing search tree for 100% lead coverage...');
       cabinets = await resolveAdaptiveExecutionTree(probeDensity, baseFilters, {
         maxLeadsPerCabinet: 125,
+        initialTotal,
         onProbeProgress: (p) => {
           if (p.type === 'BRACKET_PROBE') {
             hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads found...`);
@@ -212,14 +241,26 @@
 
     const isOpenRange = (b) => typeof b === 'string' && (b.endsWith(',') || b.endsWith('+') || b.startsWith(','));
     if (!cabinets || cabinets.length === 0 || (cabinets.length === 1 && isOpenRange(cabinets[0].bracket?.[0]))) {
-      const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true });
-      cabinets = rawBrackets.map(b => ({
-        label: Array.isArray(b) ? b[0] : String(b),
-        bracket: Array.isArray(b) ? b : [String(b)],
-        seniority: null,
-        emailStatus: null,
-        mode: 'Bidirectional'
-      }));
+      if (typeof initialTotal === 'number' && initialTotal <= 250) {
+        cabinets = [{
+          label: 'All Matching Leads',
+          bracket: null,
+          seniority: null,
+          emailStatus: null,
+          total: initialTotal,
+          pagesNeeded: Math.min(5, Math.ceil(initialTotal / 25)),
+          mode: initialTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
+        }];
+      } else {
+        const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true });
+        cabinets = rawBrackets.map(b => ({
+          label: Array.isArray(b) ? b[0] : String(b),
+          bracket: Array.isArray(b) ? b : [String(b)],
+          seniority: null,
+          emailStatus: null,
+          mode: 'Bidirectional'
+        }));
+      }
     }
 
     let totalSlices = cabinets.length;
