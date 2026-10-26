@@ -22,6 +22,7 @@
     resolveAdaptiveExecutionTree,
     resolveHarvestExecutionPlan,
     resolveExecutionBrackets,
+    detectMaxEmployeesFromFilters,
     subdivideCabinet,
     DeduplicationStore,
     generatePacingDelay,
@@ -201,6 +202,12 @@
     const currentHash = window.location.hash || '';
     const baseFilters = parseApolloUrlHash(currentHash);
     const targetLeadLimit = config.targetLeadLimit || 10000;
+    const maxEmployees = detectMaxEmployeesFromFilters(baseFilters, config);
+
+    if (typeof maxEmployees === 'number' && maxEmployees > 0) {
+      console.log(`[Apollo Extractor] Enforcing max employee constraint: ≤ ${maxEmployees} employees.`);
+      hud.setStatus(`⚡ Headcount constraint active: max ${maxEmployees} employees.`);
+    }
 
     // Extract current visible total leads from DOM if present
     let initialTotal = null;
@@ -225,6 +232,7 @@
       cabinets = await resolveAdaptiveExecutionTree(probeDensity, baseFilters, {
         maxLeadsPerCabinet: 125,
         initialTotal,
+        maxEmployees,
         onProbeProgress: (p) => {
           if (p.type === 'BRACKET_PROBE') {
             hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads found...`);
@@ -252,7 +260,7 @@
           mode: initialTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
         }];
       } else {
-        const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true });
+        const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true, maxEmployees });
         cabinets = rawBrackets.map(b => ({
           label: Array.isArray(b) ? b[0] : String(b),
           bracket: Array.isArray(b) ? b : [String(b)],
@@ -355,6 +363,12 @@
         const people = data.people || [];
         let addedInPage = 0;
         for (const person of people) {
+          if (typeof maxEmployees === 'number' && maxEmployees > 0) {
+            const emp = person.organization?.estimated_num_employees || person.organization_num_employees;
+            if (typeof emp === 'number' && emp > maxEmployees) {
+              continue;
+            }
+          }
           if (dedupeStore.add(person)) {
             addedInPage++;
             sliceHarvested++;
@@ -439,6 +453,12 @@
           const people = data.people || [];
           let addedInPage = 0;
           for (const person of people) {
+            if (typeof maxEmployees === 'number' && maxEmployees > 0) {
+              const emp = person.organization?.estimated_num_employees || person.organization_num_employees;
+              if (typeof emp === 'number' && emp > maxEmployees) {
+                continue;
+              }
+            }
             if (dedupeStore.add(person)) {
               addedInPage++;
               sliceHarvested++;

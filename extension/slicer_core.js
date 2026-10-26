@@ -454,7 +454,9 @@ export function parseApolloUrlHash(urlOrHash = '') {
     'organizationFoundedYearRange': 'organization_founded_year_range',
     'organizationOpenPositionsCountRange': 'organization_open_positions_count_range',
     'organizationLatestFundingAmountRange': 'organization_latest_funding_amount_range',
-    'organizationTotalFundingAmountRange': 'organization_total_funding_amount_range'
+    'organizationTotalFundingAmountRange': 'organization_total_funding_amount_range',
+    'organizationNumEmployeesRange': 'organization_num_employees_range',
+    'organizationNumEmployeesRanges': 'organization_num_employees_range'
   };
 
   for (const [urlPrefix, apiKey] of Object.entries(nestedRangeMappings)) {
@@ -530,21 +532,103 @@ export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = nul
   return `${path}?${filteredPairs.join('&')}`;
 }
 
+// 8c. Max Employee Detector (Extracts explicit or inferred upper employee limit from filters/options)
+export function detectMaxEmployeesFromFilters(basePayload = {}, options = {}) {
+  if (typeof options.maxEmployees === 'number' && options.maxEmployees > 0) {
+    return options.maxEmployees;
+  }
+  if (typeof basePayload.max_employees === 'number' && basePayload.max_employees > 0) {
+    return basePayload.max_employees;
+  }
+  if (basePayload.organization_num_employees_range && typeof basePayload.organization_num_employees_range.max === 'number') {
+    return basePayload.organization_num_employees_range.max;
+  }
+
+  const ranges = basePayload.organization_num_employees_ranges;
+  if (Array.isArray(ranges) && ranges.length > 0) {
+    let maxFound = -Infinity;
+    let hasOpenUpperBound = false;
+
+    for (const r of ranges) {
+      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : String(r));
+      if (typeof str !== 'string') continue;
+      const trimmed = str.trim();
+
+      // Lower+ open range like "50,", "50+", or "10001"
+      if (trimmed.endsWith(',') || trimmed.endsWith('+') || trimmed === '10001') {
+        hasOpenUpperBound = true;
+        break;
+      }
+
+      // Upper-bounded open range like ",50"
+      if (trimmed.startsWith(',')) {
+        const u = parseInt(trimmed.replace(',', ''), 10);
+        if (!isNaN(u) && u > maxFound) maxFound = u;
+      } else if (trimmed.includes(',')) {
+        const parts = trimmed.split(',').map(s => parseInt(s.trim(), 10));
+        if (parts.length === 2 && !isNaN(parts[1])) {
+          if (parts[1] > maxFound) maxFound = parts[1];
+        } else if (parts.length === 2 && isNaN(parts[1])) {
+          hasOpenUpperBound = true;
+          break;
+        }
+      } else {
+        const u = parseInt(trimmed, 10);
+        if (!isNaN(u) && u > maxFound) maxFound = u;
+      }
+    }
+
+    if (!hasOpenUpperBound && maxFound > 0 && maxFound !== -Infinity) {
+      return maxFound;
+    }
+  }
+
+  return null;
+}
+
 // 9. Universal Execution Plan Resolver (Extracts active search brackets or defaults to 10 universal brackets)
-export function resolveHarvestExecutionPlan(basePayload = {}) {
+export function resolveHarvestExecutionPlan(basePayload = {}, options = {}) {
+  const maxEmp = detectMaxEmployeesFromFilters(basePayload, options);
+  let plans = [];
   const customRanges = basePayload.organization_num_employees_ranges;
   if (Array.isArray(customRanges) && customRanges.length > 0) {
     if (customRanges.length === 1 && typeof customRanges[0] === 'string' && (customRanges[0].endsWith(',') || customRanges[0].endsWith('+') || customRanges[0].startsWith(','))) {
-      return expandOpenHeadcountRange(customRanges[0]);
+      plans = expandOpenHeadcountRange(customRanges[0]);
+    } else {
+      plans = customRanges.map(r => Array.isArray(r) ? r : [r]);
     }
-    return customRanges.map(r => Array.isArray(r) ? r : [r]);
+  } else {
+    plans = [...UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS];
   }
-  return [...UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS];
+
+  if (typeof maxEmp === 'number' && maxEmp > 0) {
+    const filtered = [];
+    for (const p of plans) {
+      const str = p[0];
+      if (str === '10001') {
+        if (maxEmp >= 10001) filtered.push(['10001']);
+        continue;
+      }
+      const parts = str.split(',').map(n => parseInt(n.trim(), 10));
+      if (parts[0] <= maxEmp) {
+        if (parts[1] !== undefined && parts[1] > maxEmp) {
+          filtered.push([`${parts[0]},${maxEmp}`]);
+        } else {
+          filtered.push(p);
+        }
+      }
+    }
+    return filtered.length > 0 ? filtered : plans;
+  }
+
+  return plans;
 }
 
 // 9b. Micro-Bracket Execution Plan Resolver (Decomposes macro brackets into adaptive micro-cabinets)
 export function resolveExecutionBrackets(basePayload = {}, options = {}) {
+  const maxEmp = detectMaxEmployeesFromFilters(basePayload, options);
   const customRanges = basePayload.organization_num_employees_ranges;
+  let raw = [];
   if (Array.isArray(customRanges) && customRanges.length > 0) {
     const out = [];
     for (const r of customRanges) {
@@ -567,20 +651,43 @@ export function resolveExecutionBrackets(basePayload = {}, options = {}) {
         out.push(Array.isArray(r) ? r : [r]);
       }
     }
-    return out;
-  }
-  const universal = [];
-  for (const b of UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS) {
-    const macro = b[0];
-    if (macro === '10001') {
-      universal.push(['10001']);
-    } else if (isHighDensityBracket([macro])) {
-      universal.push(...decomposeHighDensityBracket(macro, options));
-    } else {
-      universal.push([macro]);
+    raw = out;
+  } else {
+    const universal = [];
+    for (const b of UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS) {
+      const macro = b[0];
+      if (macro === '10001') {
+        universal.push(['10001']);
+      } else if (isHighDensityBracket([macro])) {
+        universal.push(...decomposeHighDensityBracket(macro, options));
+      } else {
+        universal.push([macro]);
+      }
     }
+    raw = universal;
   }
-  return universal;
+
+  if (typeof maxEmp === 'number' && maxEmp > 0) {
+    const filtered = [];
+    for (const b of raw) {
+      const str = b[0];
+      if (str === '10001') {
+        if (maxEmp >= 10001) filtered.push(['10001']);
+        continue;
+      }
+      const parts = str.split(',').map(n => parseInt(n.trim(), 10));
+      if (parts[0] <= maxEmp) {
+        if (parts[1] !== undefined && parts[1] > maxEmp) {
+          filtered.push([`${parts[0]},${maxEmp}`]);
+        } else {
+          filtered.push(b);
+        }
+      }
+    }
+    return filtered.length > 0 ? filtered : raw;
+  }
+
+  return raw;
 }
 
 // 9. Cabinet Overflow Detector (Checks if cabinet has >125 leads and needs dynamic drain)
@@ -2665,6 +2772,19 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       { min: 5001, max: 10000, label: '5001,10000' },
       { min: 10001, max: 10001, label: '10001' }
     ];
+  }
+
+  const maxEmp = detectMaxEmployeesFromFilters(basePayload, options);
+  if (typeof maxEmp === 'number' && maxEmp > 0) {
+    startingBrackets = startingBrackets
+      .filter(b => b.min <= maxEmp)
+      .map(b => {
+        if (b.max > maxEmp) {
+          const newMax = maxEmp;
+          return { min: b.min, max: newMax, label: b.min === newMax ? String(b.min) : `${b.min},${newMax}` };
+        }
+        return b;
+      });
   }
 
   // Short-Circuit Check: If search has <= maxLimit * 2 leads, execute as 1 single cabinet!

@@ -111,4 +111,46 @@ test('parseApolloUrlHash parses personLinkedinUrls and personNotLinkedinUrls wit
     'https://www.linkedin.com/in/ex-employee/'
   ]);
 });
+test('detectMaxEmployeesFromFilters extracts finite max employee limits', async () => {
+  const { detectMaxEmployeesFromFilters, resolveExecutionBrackets, resolveHarvestExecutionPlan } = await import('../extension/slicer_core.js');
 
+  // Case 1: Predefined brackets up to 50
+  const max1 = detectMaxEmployeesFromFilters({ organization_num_employees_ranges: ['1,10', '11,20', '21,50'] });
+  assert.equal(max1, 50);
+
+  // Case 2: Custom range up to 100
+  const max2 = detectMaxEmployeesFromFilters({ organization_num_employees_ranges: ['1,100'] });
+  assert.equal(max2, 100);
+
+  // Case 3: Upper-bounded open range ,50
+  const max3 = detectMaxEmployeesFromFilters({ organization_num_employees_ranges: [',50'] });
+  assert.equal(max3, 50);
+
+  // Case 4: Nested range mapping { max: 200 }
+  const max4 = detectMaxEmployeesFromFilters({ organization_num_employees_range: { min: 10, max: 200 } });
+  assert.equal(max4, 200);
+
+  // Case 5: Lower+ open range 50, (unbounded)
+  const max5 = detectMaxEmployeesFromFilters({ organization_num_employees_ranges: ['50,'] });
+  assert.equal(max5, null);
+
+  // Case 6: resolveExecutionBrackets strictly caps brackets at maxEmployees = 50
+  const brackets = resolveExecutionBrackets({ organization_num_employees_ranges: ['1,10', '11,20', '21,50'] });
+  assert.ok(brackets.length > 0);
+  for (const b of brackets) {
+    const parts = b[0].split(',').map(Number);
+    assert.ok(parts[0] <= 50, `Bracket min ${parts[0]} must be <= 50`);
+    if (parts[1] !== undefined) {
+      assert.ok(parts[1] <= 50, `Bracket max ${parts[1]} must be <= 50`);
+    }
+  }
+
+  // Case 7: resolveHarvestExecutionPlan with universal fallback capped at 100
+  const plans = resolveHarvestExecutionPlan({}, { maxEmployees: 100 });
+  assert.deepEqual(plans, [
+    ['1,10'],
+    ['11,20'],
+    ['21,50'],
+    ['51,100']
+  ]);
+});
