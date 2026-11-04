@@ -153,4 +153,112 @@ test('detectMaxEmployeesFromFilters extracts finite max employee limits', async 
     ['21,50'],
     ['51,100']
   ]);
+
+  // Case 8: Defensive null input handling
+  assert.equal(detectMaxEmployeesFromFilters(null), null);
+  assert.equal(detectMaxEmployeesFromFilters({}, null), null);
+  assert.equal(detectMaxEmployeesFromFilters(null, null), null);
+
+  // Case 9: Nested range with invalid/NaN max
+  assert.equal(detectMaxEmployeesFromFilters({ organization_num_employees_range: { max: NaN } }), null);
+  assert.equal(detectMaxEmployeesFromFilters({ organization_num_employees_range: { max: -5 } }), null);
+
+  // Case 10: Open range '10001' or '50+' returns null
+  assert.equal(detectMaxEmployeesFromFilters({ organization_num_employees_ranges: ['10001'] }), null);
+  assert.equal(detectMaxEmployeesFromFilters({ organization_num_employees_ranges: ['50+'] }), null);
+
+  // Case 11: All candidate brackets exceed maxEmployees -> returns empty array (no leakage!)
+  const emptyPlan = resolveHarvestExecutionPlan({ organization_num_employees_ranges: ['501,1000'] }, { maxEmployees: 50 });
+  assert.deepEqual(emptyPlan, []);
+  const emptyBrackets = resolveExecutionBrackets({ organization_num_employees_ranges: ['501,1000'] }, { maxEmployees: 50 });
+  assert.deepEqual(emptyBrackets, []);
+
+  // Case 12: Mid-range capping (e.g. 21,50 capped at 35)
+  const midPlan = resolveHarvestExecutionPlan({ organization_num_employees_ranges: ['21,50'] }, { maxEmployees: 35 });
+  assert.deepEqual(midPlan, [['21,35']]);
+});
+
+test('resolveAdaptiveExecutionTree enforces maxEmployees in short-circuit mode', async () => {
+  const { resolveAdaptiveExecutionTree } = await import('../extension/slicer_core.js');
+
+  const simulatedProbe = async () => 80;
+  const tree = await resolveAdaptiveExecutionTree(simulatedProbe, {
+    organization_num_employees_ranges: ['1,100']
+  }, {
+    maxEmployees: 50,
+    initialTotal: 80
+  });
+
+  assert.equal(tree.length, 1);
+  assert.deepEqual(tree[0].bracket, ['1,50']);
+  assert.equal(tree[0].label, '1,50 (All Matching)');
+});
+
+test('client-side employee constraint filters people before batch storage', () => {
+  const mockPeople = [
+    { id: '1', organization: { estimated_num_employees: 25 } },
+    { id: '2', organization: { num_employees: 80 } },
+    { id: '3', organization_num_employees: 120 },
+    { id: '4', organization: { number_of_employees: 45 } },
+    { id: '5', organization: {} }
+  ];
+
+  const maxEmployees = 50;
+  const filtered = mockPeople.filter(person => {
+    const emp = person.organization?.estimated_num_employees
+      ?? person.organization?.num_employees
+      ?? person.organization?.number_of_employees
+      ?? person.organization_num_employees;
+    return !(typeof emp === 'number' && emp > maxEmployees);
+  });
+
+  assert.equal(filtered.length, 3);
+  assert.deepEqual(filtered.map(p => p.id), ['1', '4', '5']);
+});
+
+test('resolveAdaptiveExecutionTree returns [] when custom ranges or root bracket strictly exceed maxEmployees', async () => {
+  const { resolveAdaptiveExecutionTree } = await import('../extension/slicer_core.js');
+
+  const simulatedProbe = async () => 80;
+
+  // Case 1: Custom range min > maxEmployees (e.g. 501,1000 with maxEmployees 50)
+  const tree1 = await resolveAdaptiveExecutionTree(simulatedProbe, {
+    organization_num_employees_ranges: ['501,1000']
+  }, {
+    maxEmployees: 50,
+    initialTotal: 80
+  });
+  assert.deepEqual(tree1, []);
+
+  // Case 2: Enterprise 10001 bracket with maxEmployees < 10001
+  const tree2 = await resolveAdaptiveExecutionTree(simulatedProbe, {
+    organization_num_employees_ranges: ['10001']
+  }, {
+    maxEmployees: 500,
+    initialTotal: 80
+  });
+  assert.deepEqual(tree2, []);
+});
+
+test('client-side employee constraint filters correctly across all 4 headcount properties', () => {
+  const mockPeople = [
+    { id: '1', organization: { estimated_num_employees: 25 } },
+    { id: '2', organization: { num_employees: 100 } },
+    { id: '3', organization: { number_of_employees: 150 } },
+    { id: '4', organization_num_employees: 200 },
+    { id: '5', organization: { num_employees: 30 } },
+    { id: '6', organization: {} } // missing headcount should not be dropped
+  ];
+
+  const maxEmployees = 50;
+  const filtered = mockPeople.filter(person => {
+    const emp = person.organization?.estimated_num_employees
+      ?? person.organization?.num_employees
+      ?? person.organization?.number_of_employees
+      ?? person.organization_num_employees;
+    return !(typeof emp === 'number' && emp > maxEmployees);
+  });
+
+  assert.equal(filtered.length, 3);
+  assert.deepEqual(filtered.map(p => p.id), ['1', '5', '6']);
 });

@@ -534,24 +534,27 @@ export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = nul
 
 // 8c. Max Employee Detector (Extracts explicit or inferred upper employee limit from filters/options)
 export function detectMaxEmployeesFromFilters(basePayload = {}, options = {}) {
-  if (typeof options.maxEmployees === 'number' && options.maxEmployees > 0) {
-    return options.maxEmployees;
+  const opts = (options && typeof options === 'object') ? options : {};
+  const payload = (basePayload && typeof basePayload === 'object') ? basePayload : {};
+
+  if (typeof opts.maxEmployees === 'number' && Number.isFinite(opts.maxEmployees) && opts.maxEmployees > 0) {
+    return opts.maxEmployees;
   }
-  if (typeof basePayload.max_employees === 'number' && basePayload.max_employees > 0) {
-    return basePayload.max_employees;
+  if (typeof payload.max_employees === 'number' && Number.isFinite(payload.max_employees) && payload.max_employees > 0) {
+    return payload.max_employees;
   }
-  if (basePayload.organization_num_employees_range && typeof basePayload.organization_num_employees_range.max === 'number') {
-    return basePayload.organization_num_employees_range.max;
+  if (payload.organization_num_employees_range && typeof payload.organization_num_employees_range.max === 'number' && Number.isFinite(payload.organization_num_employees_range.max) && payload.organization_num_employees_range.max > 0) {
+    return payload.organization_num_employees_range.max;
   }
 
-  const ranges = basePayload.organization_num_employees_ranges;
+  const ranges = payload.organization_num_employees_ranges;
   if (Array.isArray(ranges) && ranges.length > 0) {
     let maxFound = -Infinity;
     let hasOpenUpperBound = false;
 
     for (const r of ranges) {
-      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : String(r));
-      if (typeof str !== 'string') continue;
+      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : (r != null ? String(r) : ''));
+      if (typeof str !== 'string' || !str) continue;
       const trimmed = str.trim();
 
       // Lower+ open range like "50,", "50+", or "10001"
@@ -590,12 +593,15 @@ export function detectMaxEmployeesFromFilters(basePayload = {}, options = {}) {
 export function resolveHarvestExecutionPlan(basePayload = {}, options = {}) {
   const maxEmp = detectMaxEmployeesFromFilters(basePayload, options);
   let plans = [];
-  const customRanges = basePayload.organization_num_employees_ranges;
+  const customRanges = basePayload?.organization_num_employees_ranges;
   if (Array.isArray(customRanges) && customRanges.length > 0) {
-    if (customRanges.length === 1 && typeof customRanges[0] === 'string' && (customRanges[0].endsWith(',') || customRanges[0].endsWith('+') || customRanges[0].startsWith(','))) {
-      plans = expandOpenHeadcountRange(customRanges[0]);
-    } else {
-      plans = customRanges.map(r => Array.isArray(r) ? r : [r]);
+    for (const r of customRanges) {
+      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : (r != null ? String(r) : ''));
+      if (typeof str === 'string' && (str.endsWith(',') || str.endsWith('+') || str.startsWith(','))) {
+        plans.push(...expandOpenHeadcountRange(str));
+      } else {
+        plans.push(Array.isArray(r) ? r : [str]);
+      }
     }
   } else {
     plans = [...UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS];
@@ -604,21 +610,21 @@ export function resolveHarvestExecutionPlan(basePayload = {}, options = {}) {
   if (typeof maxEmp === 'number' && maxEmp > 0) {
     const filtered = [];
     for (const p of plans) {
-      const str = p[0];
+      const str = Array.isArray(p) ? String(p[0]) : String(p);
       if (str === '10001') {
         if (maxEmp >= 10001) filtered.push(['10001']);
         continue;
       }
       const parts = str.split(',').map(n => parseInt(n.trim(), 10));
-      if (parts[0] <= maxEmp) {
-        if (parts[1] !== undefined && parts[1] > maxEmp) {
+      if (!isNaN(parts[0]) && parts[0] <= maxEmp) {
+        if (parts[1] !== undefined && !isNaN(parts[1]) && parts[1] > maxEmp) {
           filtered.push([`${parts[0]},${maxEmp}`]);
         } else {
-          filtered.push(p);
+          filtered.push(Array.isArray(p) ? p : [str]);
         }
       }
     }
-    return filtered.length > 0 ? filtered : plans;
+    return filtered;
   }
 
   return plans;
@@ -627,12 +633,12 @@ export function resolveHarvestExecutionPlan(basePayload = {}, options = {}) {
 // 9b. Micro-Bracket Execution Plan Resolver (Decomposes macro brackets into adaptive micro-cabinets)
 export function resolveExecutionBrackets(basePayload = {}, options = {}) {
   const maxEmp = detectMaxEmployeesFromFilters(basePayload, options);
-  const customRanges = basePayload.organization_num_employees_ranges;
+  const customRanges = basePayload?.organization_num_employees_ranges;
   let raw = [];
   if (Array.isArray(customRanges) && customRanges.length > 0) {
     const out = [];
     for (const r of customRanges) {
-      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : String(r));
+      const str = Array.isArray(r) ? r[0] : (typeof r === 'string' ? r : (r != null ? String(r) : ''));
       if (typeof str === 'string' && (str.endsWith(',') || str.endsWith('+') || str.startsWith(','))) {
         const expanded = expandOpenHeadcountRange(str);
         for (const item of expanded) {
@@ -648,7 +654,7 @@ export function resolveExecutionBrackets(basePayload = {}, options = {}) {
       } else if (typeof str === 'string' && isHighDensityBracket([str])) {
         out.push(...decomposeHighDensityBracket(str, options));
       } else {
-        out.push(Array.isArray(r) ? r : [r]);
+        out.push(Array.isArray(r) ? r : [str]);
       }
     }
     raw = out;
@@ -670,21 +676,21 @@ export function resolveExecutionBrackets(basePayload = {}, options = {}) {
   if (typeof maxEmp === 'number' && maxEmp > 0) {
     const filtered = [];
     for (const b of raw) {
-      const str = b[0];
+      const str = Array.isArray(b) ? String(b[0]) : String(b);
       if (str === '10001') {
         if (maxEmp >= 10001) filtered.push(['10001']);
         continue;
       }
       const parts = str.split(',').map(n => parseInt(n.trim(), 10));
-      if (parts[0] <= maxEmp) {
-        if (parts[1] !== undefined && parts[1] > maxEmp) {
+      if (!isNaN(parts[0]) && parts[0] <= maxEmp) {
+        if (parts[1] !== undefined && !isNaN(parts[1]) && parts[1] > maxEmp) {
           filtered.push([`${parts[0]},${maxEmp}`]);
         } else {
-          filtered.push(b);
+          filtered.push(Array.isArray(b) ? b : [str]);
         }
       }
     }
-    return filtered.length > 0 ? filtered : raw;
+    return filtered;
   }
 
   return raw;
@@ -1559,34 +1565,35 @@ export const PREFERRED_PERSON_COLUMNS = [
   'icp_tier',
   'icp_reasons',
   'headline',
-  'photo_url',
-  'past_companies',
-  'past_titles',
   'email',
   'extrapolated_email',
   'email_status',
   'phone',
   'linkedin_url',
   'twitter_url',
-  'github_url',
-  'facebook_url',
   'city',
   'state',
   'country',
-  'postal_code',
-  'formatted_address',
   'time_zone',
   'company_name',
   'company_domain',
-  'company_phone',
+  'company_website',
+  'company_linkedin',
   'company_employees',
   'company_industry',
-  'company_technologies',
   'company_keywords',
+  'company_phone',
+  'company_founded_year',
+  'company_technologies',
   'company_funding',
   'company_revenue',
-  'company_linkedin',
-  'company_website',
+  'photo_url',
+  'past_companies',
+  'past_titles',
+  'github_url',
+  'facebook_url',
+  'postal_code',
+  'formatted_address',
   'scraped_at'
 ];
 
@@ -1689,15 +1696,16 @@ export function normalizePersonComprehensive(raw) {
     company_id: org.id || raw.organization_id || '',
     company_name: org.name || '',
     company_domain: org.primary_domain || org.website_url || '',
-    company_phone: org.phone || org.primary_phone?.number || org.sanitized_phone || '',
-    company_employees: employeesVal,
-    company_revenue: org.organization_revenue_printed || org.annual_revenue_printed || org.annual_revenue || '',
-    company_industry: industryVal,
-    company_technologies: techVal,
-    company_keywords: keywordsVal,
-    company_funding: fundingVal,
-    company_linkedin: org.linkedin_url || '',
     company_website: org.website_url || '',
+    company_linkedin: org.linkedin_url || '',
+    company_employees: employeesVal,
+    company_industry: industryVal,
+    company_keywords: keywordsVal,
+    company_phone: org.phone || org.primary_phone?.number || org.sanitized_phone || '',
+    company_founded_year: org.founded_year || raw.organization_founded_year || '',
+    company_revenue: org.organization_revenue_printed || org.annual_revenue_printed || org.annual_revenue || '',
+    company_technologies: techVal,
+    company_funding: fundingVal,
     scraped_at: new Date().toISOString()
   };
 
@@ -2781,10 +2789,14 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       .map(b => {
         if (b.max > maxEmp) {
           const newMax = maxEmp;
-          return { min: b.min, max: newMax, label: b.min === newMax ? String(b.min) : `${b.min},${newMax}` };
+          return { min: b.min, max: newMax, label: `${b.min},${newMax}` };
         }
         return b;
       });
+
+    if (startingBrackets.length === 0) {
+      return [];
+    }
   }
 
   // Short-Circuit Check: If search has <= maxLimit * 2 leads, execute as 1 single cabinet!
@@ -2804,10 +2816,37 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
   }
 
   if (typeof rootTotal === 'number' && rootTotal > 0 && (rootTotal <= maxLimit || (options.initialTotal !== undefined && rootTotal <= 250))) {
-    const singleLabel = customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0])) : 'All Matching Leads';
+    let singleLabel = customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0])) : 'All Matching Leads';
+    let bracket = customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0] : [String(customRanges[0])]) : null;
+
+    if (typeof maxEmp === 'number' && maxEmp > 0) {
+      if (bracket && bracket[0]) {
+        const str = String(bracket[0]);
+        if (str === '10001') {
+          if (maxEmp < 10001) return [];
+        } else {
+          const parts = str.split(',').map(n => parseInt(n.trim(), 10));
+          if (!isNaN(parts[0])) {
+            if (parts[0] > maxEmp) {
+              return [];
+            }
+            if (parts[1] !== undefined && !isNaN(parts[1]) && parts[1] > maxEmp) {
+              bracket = [`${parts[0]},${maxEmp}`];
+              singleLabel = `${parts[0]},${maxEmp}`;
+            }
+          }
+        }
+      } else if (!bracket && startingBrackets.length > 0) {
+        bracket = [`${startingBrackets[0].min},${maxEmp}`];
+        singleLabel = `${startingBrackets[0].min},${maxEmp}`;
+      } else if (!bracket && startingBrackets.length === 0) {
+        return [];
+      }
+    }
+
     return [{
       label: singleLabel.includes('All Matching') ? singleLabel : `${singleLabel} (All Matching)`,
-      bracket: customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0] : [String(customRanges[0])]) : null,
+      bracket,
       seniority: null,
       emailStatus: null,
       keyword: null,

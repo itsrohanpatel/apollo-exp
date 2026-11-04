@@ -248,7 +248,7 @@
     }
 
     const isOpenRange = (b) => typeof b === 'string' && (b.endsWith(',') || b.endsWith('+') || b.startsWith(','));
-    if (!cabinets || cabinets.length === 0 || (cabinets.length === 1 && isOpenRange(cabinets[0].bracket?.[0]))) {
+    if (!cabinets || (cabinets.length === 0 && !(typeof maxEmployees === 'number' && maxEmployees > 0)) || (cabinets.length === 1 && isOpenRange(cabinets[0].bracket?.[0]))) {
       if (typeof initialTotal === 'number' && initialTotal <= 250) {
         cabinets = [{
           label: 'All Matching Leads',
@@ -305,6 +305,15 @@
         while (isPaused && !harvestAbort) await new Promise(r => setTimeout(r, 500));
 
         hud.setStatus(`Scanning Pass 1 (A-Z) Page ${page}/5 for [${sliceLabel}]...`);
+        hud.updateProgress({
+          sliceIdx: i + 1,
+          totalSlices,
+          sliceLabel,
+          passLabel: `Pass 1: A-Z (p${page})`,
+          sliceHarvested,
+          sliceTotal,
+          totalLeads: dedupeStore.size()
+        });
         const waitPromise = waitForBatch();
 
         if (page === 1) {
@@ -360,15 +369,19 @@
           }
         }
 
-        const people = data.people || [];
+        const rawPeople = data.people || [];
+        const people = (typeof maxEmployees === 'number' && maxEmployees > 0)
+          ? rawPeople.filter(person => {
+              const emp = person.organization?.estimated_num_employees
+                ?? person.organization?.num_employees
+                ?? person.organization?.number_of_employees
+                ?? person.organization_num_employees;
+              return !(typeof emp === 'number' && emp > maxEmployees);
+            })
+          : rawPeople;
+
         let addedInPage = 0;
         for (const person of people) {
-          if (typeof maxEmployees === 'number' && maxEmployees > 0) {
-            const emp = person.organization?.estimated_num_employees || person.organization_num_employees;
-            if (typeof emp === 'number' && emp > maxEmployees) {
-              continue;
-            }
-          }
           if (dedupeStore.add(person)) {
             addedInPage++;
             sliceHarvested++;
@@ -393,7 +406,7 @@
           });
         }
 
-        if (people.length < 25) {
+        if (rawPeople.length < 25) {
           pass1Done = true;
           break;
         }
@@ -427,6 +440,15 @@
           while (isPaused && !harvestAbort) await new Promise(r => setTimeout(r, 500));
 
           hud.setStatus(`Scanning Pass 2 (Z-A) Page ${page}/5 for [${sliceLabel}]...`);
+          hud.updateProgress({
+            sliceIdx: i + 1,
+            totalSlices,
+            sliceLabel,
+            passLabel: `Pass 2: Z-A (p${page})`,
+            sliceHarvested,
+            sliceTotal,
+            totalLeads: dedupeStore.size()
+          });
           const waitPromise = waitForBatch();
 
           if (page === 1) {
@@ -450,15 +472,19 @@
             }
           }
 
-          const people = data.people || [];
+          const rawPeople = data.people || [];
+          const people = (typeof maxEmployees === 'number' && maxEmployees > 0)
+            ? rawPeople.filter(person => {
+                const emp = person.organization?.estimated_num_employees
+                  ?? person.organization?.num_employees
+                  ?? person.organization?.number_of_employees
+                  ?? person.organization_num_employees;
+                return !(typeof emp === 'number' && emp > maxEmployees);
+              })
+            : rawPeople;
+
           let addedInPage = 0;
           for (const person of people) {
-            if (typeof maxEmployees === 'number' && maxEmployees > 0) {
-              const emp = person.organization?.estimated_num_employees || person.organization_num_employees;
-              if (typeof emp === 'number' && emp > maxEmployees) {
-                continue;
-              }
-            }
             if (dedupeStore.add(person)) {
               addedInPage++;
               sliceHarvested++;
@@ -482,7 +508,7 @@
             });
           }
 
-          if (people.length < 25) break;
+          if (rawPeople.length < 25) break;
 
           const delay = generatePacingDelay(2000, 3200);
           await sleepWithCountdown(delay);

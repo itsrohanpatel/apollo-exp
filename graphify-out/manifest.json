@@ -6,14 +6,14 @@
     "semantic_hash": ""
   },
   "extension/content.js": {
-    "mtime": 1792931078.0027738,
-    "seen": 1792938991.0114367,
-    "ast_hash": "56b56949497c34cfc786e4b239f6a2ec",
+    "mtime": 1793812755.2983468,
+    "seen": 1793812827.656029,
+    "ast_hash": "205245fb6a090efa4323f0e3df7c0577",
     "semantic_hash": ""
   },
   "extension/injected.js": {
-    "mtime": 1792925033.0379603,
-    "seen": 1792938991.0114515,
+    "mtime": 1793813659.6763864,
+    "seen": 1793817690.1762009,
     "ast_hash": "eeddc09861389a0ca7b056059722dfb2",
     "semantic_hash": ""
   },
@@ -30,9 +30,9 @@
     "semantic_hash": ""
   },
   "extension/slicer_core.js": {
-    "mtime": 1792931139.6250756,
-    "seen": 1792938991.011463,
-    "ast_hash": "86358a953019ca86c1773fa3cfe37802",
+    "mtime": 1793817600.5003853,
+    "seen": 1793817690.176214,
+    "ast_hash": "7d48160dbdc729851e21b42263006d44",
     "semantic_hash": ""
   },
   "package.json": {
@@ -258,9 +258,9 @@
     "semantic_hash": ""
   },
   ".agents/rules/apollo-scraper-architecture.md": {
-    "mtime": 1792426325.6562529,
-    "seen": 1792427229.0476859,
-    "ast_hash": "5001f92453a937665aa81a1f4c1462b9",
+    "mtime": 1792941048.2308526,
+    "seen": 1793810573.0352287,
+    "ast_hash": "e204380719d228d084489fc841500ccd",
     "semantic_hash": ""
   },
   ".agents/rules/browser_tool_selection.md": {
@@ -657,6 +657,18 @@
     "mtime": 1792937324.8932226,
     "seen": 1792938991.011749,
     "ast_hash": "69473308767c2c0a8cffdb407b3c6b85",
+    "semantic_hash": ""
+  },
+  "tests/expanded_filters.test.mjs": {
+    "mtime": 1793810066.981968,
+    "seen": 1793810573.0351837,
+    "ast_hash": "804e1e2a97bd1a790db8d8d7faae24cc",
+    "semantic_hash": ""
+  },
+  "docs/APOLLO_FILTERS_AND_URL_SPECIFICATION.md": {
+    "mtime": 1793026826.979762,
+    "seen": 1793810573.0352714,
+    "ast_hash": "0f2fb1297f01c854d77dc8242236087e",
     "semantic_hash": ""
   }
 }

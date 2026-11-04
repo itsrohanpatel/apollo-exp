@@ -1,17 +1,17 @@
-# Graph Report - apollo scraper  (2026-10-25)
+# Graph Report - apollo scraper  (2026-11-05)
 
 ## Corpus Check
-- 96 files · ~128,073 words
+- 98 files · ~132,209 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 3 file(s) not represented in the graph (top: .css 2, (none) 1)
 
 ## Summary
-- 808 nodes · 1099 edges · 67 communities (61 shown, 6 thin omitted)
+- 836 nodes · 1136 edges · 54 communities (49 shown, 5 thin omitted)
 - Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 63 edges (avg confidence: 0.95)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `2d323c58`
+- Built from commit: `ff166499`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -24,7 +24,7 @@
 - SmartBatcher
 - PART A: PEOPLE / EMPLOYEE FILTERS (`#/people`)
 - PersistentOrgCache
-- ref_http
+- ref_ws
 - background.js
 - 2. Core Endpoints for Lead Scraping & Prospecting
 - DynamicBisectionTree
@@ -35,7 +35,7 @@
 - SafetyCircuitBreaker
 - CompanyEnrichmentEngine
 - 2. The 6 Proven Bypass Methodologies
-- test_company_scraper_live.mjs
+- Apollo.io Complete Filter Architecture & URL Serialization Specification
 - Apollo.io Complete Network & API Surface Audit
 - hud_mission_control.test.mjs
 - ref_path
@@ -43,7 +43,6 @@
 - Comprehensive Multi-Step Implementation Plan
 - ApolloHUD
 - slicer_core.js
-- ref_ws
 - review_station_server.mjs
 - 🛠️ Tool Index & Run Guide
 - Apollo.io Scraper Chrome Extension Architecture (Manifest V3)
@@ -54,28 +53,16 @@
 - extract_hud_crop.mjs
 - 3. Feeding Enriched Leads into `lead-intelligence`
 - 1. Key Technical Discoveries & Hard Limits
-- test_zero_loss_export.mjs
 - ref_fs
-- benchmark_org_enrich.mjs
-- check_storage_exact.mjs
-- clear_and_reload.mjs
 - Apollo.io Scraper Chrome Extension & Reverse Engineering Documentation
 - analyze_csv_breakdown.mjs
 - Browser Tool Selection & Active Session Rule
 - Live Empirical Test Report: Adaptive Micro-Slicing Harvester
 - test_brackets.mjs
 - Mandatory ECC Workflow & Skill Discovery Protocol
-- inspect_extension_state.mjs
-- inspect_scraped_dataset.mjs
-- reload_extension.mjs
 - package.json
 - Scripts Lifecycle & Tooling Discipline Rule
 - TDD Evidence Report: Universal Deep Harvest Engine (10,000+ Leads)
-- run_active_scrape.mjs
-- test_live_scrape_verification.mjs
-- trigger_and_monitor_scrape.mjs
-- verify_each_cabinet.mjs
-- inspect_review_dom.mjs
 - content.js
 - sanitizeCSVValue
 - Workflows
@@ -89,10 +76,10 @@
 4. `PersistentOrgCache` - 14 edges
 5. `DeduplicationStore` - 12 edges
 6. `AdaptivePacer` - 11 edges
-7. `PART A: PEOPLE / EMPLOYEE FILTERS (`#/people`)` - 11 edges
-8. `HarvestManifest` - 10 edges
-9. `🛠️ Tool Index & Run Guide` - 10 edges
-10. `ApolloHUD` - 9 edges
+7. `resolveAdaptiveExecutionTree()` - 11 edges
+8. `PART A: PEOPLE / EMPLOYEE FILTERS (`#/people`)` - 11 edges
+9. `HarvestManifest` - 10 edges
+10. `🛠️ Tool Index & Run Guide` - 10 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `2.1 Backend / Systems Architect (Codex Review)` --references--> `AdaptivePacer`  [INFERRED]
@@ -109,11 +96,11 @@
 ## Import Cycles
 - None detected.
 
-## Communities (67 total, 6 thin omitted)
+## Communities (54 total, 5 thin omitted)
 
 ### Community 0 - "test_company_scraper_live.mjs"
-Cohesion: 0.53
-Nodes (4): evalInPage(), getApolloTab(), main(), sendCDP()
+Cohesion: 0.29
+Nodes (8): evalInPage(), getApolloTab(), main(), sendCDP(), connectCDP(), httpGet(), main(), sleep()
 
 ### Community 1 - "ref_fs"
 Cohesion: 0.22
@@ -129,11 +116,11 @@ Nodes (4): content, fnCode, results, sandbox
 
 ### Community 4 - "compare_csvs.mjs"
 Cohesion: 0.05
-Nodes (33): addedInNew, duplicateNewIds, missingInNew, newIdIdx, newIds, newPath, newRows, newStat (+25 more)
+Nodes (34): parseCSV(), addedInNew, duplicateNewIds, missingInNew, newIdIdx, newIds, newPath, newRows (+26 more)
 
 ### Community 5 - "SmartBatcher"
-Cohesion: 0.09
-Nodes (17): 1.1 The Flaw: Static Multiplication vs. Reality, 1.2 The Solution: Dynamic On-Demand Density Sizing, 1. Executive Summary & Problem Framing, 2.1 Backend / Systems Architect (Codex Review), 2.2 Frontend & HUD / UX Architect (Antigravity Review), 2. Multi-Model Analysis & Architectural Review, 3. Mathematical Decision Matrix, 4. Phase-by-Phase Implementation Plan (+9 more)
+Cohesion: 0.10
+Nodes (16): 1.1 The Flaw: Static Multiplication vs. Reality, 1.2 The Solution: Dynamic On-Demand Density Sizing, 1. Executive Summary & Problem Framing, 2.1 Backend / Systems Architect (Codex Review), 2.2 Frontend & HUD / UX Architect (Antigravity Review), 2. Multi-Model Analysis & Architectural Review, 3. Mathematical Decision Matrix, 4. Phase-by-Phase Implementation Plan (+8 more)
 
 ### Community 6 - "PART A: PEOPLE / EMPLOYEE FILTERS (`#/people`)"
 Cohesion: 0.06
@@ -141,11 +128,11 @@ Nodes (33): 10. Prospected / CRM Status, 1. Account Location, 1. Job Titles, 1. 
 
 ### Community 7 - "PersistentOrgCache"
 Cohesion: 0.06
-Nodes (27): 1. Executive Summary & Objective, 2. ECC Skills Relevance & Mapping Matrix, 3. Detailed Architecture Specifications, 4. Step-by-Step TDD Implementation Plan, Added Data Fields (Non-Destructive), Architecture Optimization Roadmap & Implementation Plan, Architecture Specification, Architecture Specification (+19 more)
+Nodes (28): 1. Executive Summary & Objective, 2. ECC Skills Relevance & Mapping Matrix, 3. Detailed Architecture Specifications, 4. Step-by-Step TDD Implementation Plan, Added Data Fields (Non-Destructive), Architecture Optimization Roadmap & Implementation Plan, Architecture Specification, Architecture Specification (+20 more)
 
-### Community 8 - "ref_http"
-Cohesion: 0.25
-Nodes (3): main(), httpGet(), main()
+### Community 8 - "ref_ws"
+Cohesion: 0.05
+Nodes (43): connectCDP(), httpGet(), main(), evaluate(), getApolloTab(), main(), connectCDP(), httpGet() (+35 more)
 
 ### Community 9 - "background.js"
 Cohesion: 0.80
@@ -179,9 +166,9 @@ Nodes (10): 1. Ground Truth & Requirements, 2. Patterns to Mirror, 3. Files to C
 Cohesion: 0.11
 Nodes (17): 1. Anatomy of the 5-Page Wall, 2. The 6 Proven Bypass Methodologies, 3. Recommended Production Execution Matrix, Additional Sort Key Rotations:, Empirical Verification (Live Apollo API Test Results):, Granular Slicing Dimensions in Apollo:, Master Strategy: Bypassing Apollo's 5-Page (125-Lead) Freemium Limit, Method 1: Multi-Dimensional Matrix Slicing (The Gold Standard) (+9 more)
 
-### Community 20 - "test_company_scraper_live.mjs"
-Cohesion: 0.70
-Nodes (4): connectCDP(), httpGet(), main(), sleep()
+### Community 20 - "Apollo.io Complete Filter Architecture & URL Serialization Specification"
+Cohesion: 0.08
+Nodes (23): 1. Clean Blank Search: Initial URL & Base State, 2. URL Hash Serialization Architecture, 3. Comprehensive Master Filter Mapping Table, 4. Deep-Dive: Specific Filter Value Dictionaries, 5. End-to-End Real World Scenario, 6. Key Developer Takeaways & URL Rules, 7. Work URLs & Company Domain Targeting, 8. Saved Contacts (`#/contacts`) & Saved Accounts (`#/accounts`) Specifications (+15 more)
 
 ### Community 21 - "Apollo.io Complete Network & API Surface Audit"
 Cohesion: 0.08
@@ -205,11 +192,7 @@ Nodes (11): Comprehensive Multi-Step Implementation Plan, Implementation Plan: A
 
 ### Community 27 - "slicer_core.js"
 Cohesion: 0.05
-Nodes (50): Step 5: Test-Driven Verification (TDD), RFC-4180, ALL_APOLLO_SENIORITIES, buildCabinetDrainPayload(), buildExclusionPayload(), buildHashForSlice(), CabinetExclusionTracker, calculateProbePacingDelay() (+42 more)
-
-### Community 28 - "ref_ws"
-Cohesion: 0.28
-Nodes (4): httpGet(), main(), httpGet(), main()
+Nodes (50): Step 5: Test-Driven Verification (TDD), Phase 2: In-Page Harvest Engine Integration (`extension/injected.js`), RFC-4180, ALL_APOLLO_SENIORITIES, buildCabinetDrainPayload(), buildExclusionPayload(), buildHashForSlice(), CabinetExclusionTracker (+42 more)
 
 ### Community 29 - "review_station_server.mjs"
 Cohesion: 0.18
@@ -251,25 +234,9 @@ Nodes (8): 1. The End-to-End Pipeline, 2. Ingesting Scraped Apollo Leads into `d
 Cohesion: 0.22
 Nodes (8): 1. Key Technical Discoveries & Hard Limits, 2. Updated Extension Safeguards, Lesson 1: The Strict `per_page` Hard Limit (422 Error), Lesson 2: Cloudflare Turnstile & Velocity-Based Bot Detection, Lesson 3: Latency & Response Dynamics, Lesson 4: Record Deduplication & Pagination Drift, Lesson 5: Data Completeness on Verified Leads, Lessons Learned: Scraping Apollo.io at Scale (1,000+ Leads)
 
-### Community 39 - "test_zero_loss_export.mjs"
-Cohesion: 0.70
-Nodes (4): connectCDP(), httpGet(), main(), sleep()
-
 ### Community 40 - "ref_fs"
 Cohesion: 0.40
 Nodes (3): allRows, content, viraj
-
-### Community 41 - "benchmark_org_enrich.mjs"
-Cohesion: 0.83
-Nodes (3): connectCDP(), httpGet(), main()
-
-### Community 42 - "check_storage_exact.mjs"
-Cohesion: 0.83
-Nodes (3): evaluate(), getApolloTab(), main()
-
-### Community 43 - "clear_and_reload.mjs"
-Cohesion: 0.83
-Nodes (3): connectCDP(), httpGet(), main()
 
 ### Community 44 - "Apollo.io Scraper Chrome Extension & Reverse Engineering Documentation"
 Cohesion: 0.25
@@ -295,18 +262,6 @@ Nodes (6): brackets, decomposeHighDensityBracket(), expandOpenHeadcountRange(), 
 Cohesion: 0.33
 Nodes (5): Mandatory ECC Workflow & Skill Discovery Protocol, Phase 1: ECC Capability & Skill Discovery (Pre-Flight), Phase 2: Plan & Architect, Phase 3: Test-Driven Development (TDD), Phase 4: Verification & Code Review Gate
 
-### Community 50 - "inspect_extension_state.mjs"
-Cohesion: 0.83
-Nodes (3): connectCDP(), httpGet(), main()
-
-### Community 51 - "inspect_scraped_dataset.mjs"
-Cohesion: 0.83
-Nodes (3): connectCDP(), httpGet(), main()
-
-### Community 52 - "reload_extension.mjs"
-Cohesion: 0.83
-Nodes (3): connectCDP(), httpGet(), reload()
-
 ### Community 53 - "package.json"
 Cohesion: 0.33
 Nodes (5): name, scripts, test, type, version
@@ -318,22 +273,6 @@ Nodes (4): 1. Explicit Purpose Declaration, 2. Temporary / Scratch Scripts Clean
 ### Community 55 - "TDD Evidence Report: Universal Deep Harvest Engine (10,000+ Leads)"
 Cohesion: 0.40
 Nodes (4): 1. User Journeys & Core Guarantees, 2. Test Specification & Verification Matrix, 3. TDD Progression Summary, TDD Evidence Report: Universal Deep Harvest Engine (10,000+ Leads)
-
-### Community 56 - "run_active_scrape.mjs"
-Cohesion: 0.83
-Nodes (3): evaluateInTab(), getApolloTab(), main()
-
-### Community 57 - "test_live_scrape_verification.mjs"
-Cohesion: 0.83
-Nodes (3): evaluate(), getApolloTab(), main()
-
-### Community 58 - "trigger_and_monitor_scrape.mjs"
-Cohesion: 0.83
-Nodes (3): evaluate(), getApolloTab(), main()
-
-### Community 59 - "verify_each_cabinet.mjs"
-Cohesion: 0.83
-Nodes (3): evaluate(), getApolloTab(), main()
 
 ### Community 61 - "content.js"
 Cohesion: 0.33
@@ -348,8 +287,8 @@ Cohesion: 0.29
 Nodes (6): 1. Launching Local Review Station, 2. Programmatic Lead Inspection & ICP Scoring, 3. Dry-Run Slicer Simulation, 4. Running Validation Tests, Apollo Review, Telemetry & Debug Station Skill, Workflows
 
 ### Community 82 - "Apollo Scraper Architecture & Data Integrity Guardrails"
-Cohesion: 0.40
-Nodes (4): 1. Apollo Entity Architecture, 2. Chrome Extension Service Worker (MV3) Restrictions, 3. Zero-Data-Loss Normalization & Export, Apollo Scraper Architecture & Data Integrity Guardrails
+Cohesion: 0.29
+Nodes (6): 1. Apollo Entity Architecture, 2. Chrome Extension Service Worker (MV3) Restrictions, 3. Zero-Data-Loss Normalization & Export, 4. Dynamic Cabinet Slicing & Filter Invariants, 5. Extension Portability & Packaging, Apollo Scraper Architecture & Data Integrity Guardrails
 
 ### Community 91 - "extract_steps.mjs"
 Cohesion: 0.40
@@ -357,23 +296,23 @@ Nodes (4): ffmpegPath, outDir, times, videoFile
 
 ## Knowledge Gaps
 - **1 isolated node(s):** `RFC-4180`
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 433 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **6 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 452 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **5 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `buildUnionCSV()` connect `sanitizeCSVValue` to `slicer_core.js`, `compare_csvs.mjs`, `PersistentOrgCache`?**
-  _High betweenness centrality (0.025) - this node is a cross-community bridge._
+  _High betweenness centrality (0.024) - this node is a cross-community bridge._
 - **Are the 9 inferred relationships involving `buildUnionCSV()` (e.g. with `Phase 1: Unit Tests First (RED)` and `1. Executive Summary & Problem Breakdown`) actually correct?**
   _`buildUnionCSV()` has 9 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `RFC-4180` to the rest of the system?**
   _1 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `compare_csvs.mjs` be split into smaller, more focused modules?**
-  _Cohesion score 0.05398110661268556 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05384615384615385 - nodes in this community are weakly interconnected._
 - **Why does `AdaptivePacer` connect `PersistentOrgCache` to `slicer_core.js`, `SmartBatcher`?**
-  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+  _High betweenness centrality (0.019) - this node is a cross-community bridge._
 - **Should `SmartBatcher` be split into smaller, more focused modules?**
-  _Cohesion score 0.09090909090909091 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09523809523809523 - nodes in this community are weakly interconnected._
 - **Why does `sanitizeCSVValue()` connect `sanitizeCSVValue` to `slicer_core.js`, `compare_csvs.mjs`?**
-  _High betweenness centrality (0.020) - this node is a cross-community bridge._
+  _High betweenness centrality (0.019) - this node is a cross-community bridge._
