@@ -6,9 +6,9 @@
     "semantic_hash": ""
   },
   "extension/content.js": {
-    "mtime": 1793812755.2983468,
-    "seen": 1793812827.656029,
-    "ast_hash": "205245fb6a090efa4323f0e3df7c0577",
+    "mtime": 1794050544.5379128,
+    "seen": 1794050698.7381856,
+    "ast_hash": "a0e001517dd36ee7fb732feb06b18eb6",
     "semantic_hash": ""
   },
   "extension/injected.js": {
@@ -30,9 +30,9 @@
     "semantic_hash": ""
   },
   "extension/slicer_core.js": {
-    "mtime": 1793817600.5003853,
-    "seen": 1793817690.176214,
-    "ast_hash": "7d48160dbdc729851e21b42263006d44",
+    "mtime": 1794050624.811344,
+    "seen": 1794050698.738237,
+    "ast_hash": "0426acbb5432d26e8ce5f9fb87f7cd32",
     "semantic_hash": ""
   },
   "package.json": {
@@ -660,9 +660,9 @@
     "semantic_hash": ""
   },
   "tests/expanded_filters.test.mjs": {
-    "mtime": 1793810066.981968,
-    "seen": 1793810573.0351837,
-    "ast_hash": "804e1e2a97bd1a790db8d8d7faae24cc",
+    "mtime": 1794050624.8230221,
+    "seen": 1794050698.7385383,
+    "ast_hash": "9c84ddb5b1621030fab615f40eb97f99",
     "semantic_hash": ""
   },
   "docs/APOLLO_FILTERS_AND_URL_SPECIFICATION.md": {

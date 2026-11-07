@@ -1,17 +1,17 @@
-# Graph Report - apollo scraper  (2026-11-05)
+# Graph Report - apollo scraper  (2026-11-07)
 
 ## Corpus Check
-- 98 files · ~132,209 words
+- 98 files · ~133,017 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 3 file(s) not represented in the graph (top: .css 2, (none) 1)
 
 ## Summary
-- 836 nodes · 1136 edges · 54 communities (49 shown, 5 thin omitted)
+- 838 nodes · 1139 edges · 55 communities (49 shown, 6 thin omitted)
 - Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 63 edges (avg confidence: 0.95)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `ff166499`
+- Built from commit: `83173762`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -43,6 +43,7 @@
 - Comprehensive Multi-Step Implementation Plan
 - ApolloHUD
 - slicer_core.js
+- CabinetExclusionTracker
 - review_station_server.mjs
 - 🛠️ Tool Index & Run Guide
 - Apollo.io Scraper Chrome Extension Architecture (Manifest V3)
@@ -96,7 +97,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (54 total, 5 thin omitted)
+## Communities (55 total, 6 thin omitted)
 
 ### Community 0 - "test_company_scraper_live.mjs"
 Cohesion: 0.29
@@ -116,7 +117,7 @@ Nodes (4): content, fnCode, results, sandbox
 
 ### Community 4 - "compare_csvs.mjs"
 Cohesion: 0.05
-Nodes (34): parseCSV(), addedInNew, duplicateNewIds, missingInNew, newIdIdx, newIds, newPath, newRows (+26 more)
+Nodes (33): addedInNew, duplicateNewIds, missingInNew, newIdIdx, newIds, newPath, newRows, newStat (+25 more)
 
 ### Community 5 - "SmartBatcher"
 Cohesion: 0.10
@@ -128,7 +129,7 @@ Nodes (33): 10. Prospected / CRM Status, 1. Account Location, 1. Job Titles, 1. 
 
 ### Community 7 - "PersistentOrgCache"
 Cohesion: 0.06
-Nodes (28): 1. Executive Summary & Objective, 2. ECC Skills Relevance & Mapping Matrix, 3. Detailed Architecture Specifications, 4. Step-by-Step TDD Implementation Plan, Added Data Fields (Non-Destructive), Architecture Optimization Roadmap & Implementation Plan, Architecture Specification, Architecture Specification (+20 more)
+Nodes (27): 1. Executive Summary & Objective, 2. ECC Skills Relevance & Mapping Matrix, 3. Detailed Architecture Specifications, 4. Step-by-Step TDD Implementation Plan, Added Data Fields (Non-Destructive), Architecture Optimization Roadmap & Implementation Plan, Architecture Specification, Architecture Specification (+19 more)
 
 ### Community 8 - "ref_ws"
 Cohesion: 0.05
@@ -160,7 +161,7 @@ Nodes (17): action, default_popup, default_title, background, service_worker, co
 
 ### Community 17 - "CompanyEnrichmentEngine"
 Cohesion: 0.14
-Nodes (10): 1. Ground Truth & Requirements, 2. Patterns to Mirror, 3. Files to Create / Modify, 4. Tasks & Execution Steps, Phase 1: TDD - Unit Tests (RED), Phase 2: Implementation (GREEN), Phase 3: Verification & Integration (IMPROVE), Phase 4: Cleanliness & Completion (+2 more)
+Nodes (11): 1. Ground Truth & Requirements, 2. Patterns to Mirror, 3. Files to Create / Modify, 4. Tasks & Execution Steps, Phase 1: TDD - Unit Tests (RED), Phase 2: Implementation (GREEN), Phase 3: Verification & Integration (IMPROVE), Phase 4: Cleanliness & Completion (+3 more)
 
 ### Community 18 - "2. The 6 Proven Bypass Methodologies"
 Cohesion: 0.11
@@ -191,8 +192,8 @@ Cohesion: 0.17
 Nodes (11): Comprehensive Multi-Step Implementation Plan, Implementation Plan: Apollo Scraper Resumable Harvest, Robust CSV Export & Popup Performance Optimization (v3), Key Files Touched, Risks and Mitigation, Root Cause Analysis: The 3 Main Issues, Step 1: Fix Extension Popup Lag & Eliminate Storage Bloat, Step 2: In-Flight Checkpoint & Instant Resumption (Skip Cabinets 1–46), Step 3: Reliable `.csv` File Extension Export (+3 more)
 
 ### Community 27 - "slicer_core.js"
-Cohesion: 0.05
-Nodes (50): Step 5: Test-Driven Verification (TDD), Phase 2: In-Page Harvest Engine Integration (`extension/injected.js`), RFC-4180, ALL_APOLLO_SENIORITIES, buildCabinetDrainPayload(), buildExclusionPayload(), buildHashForSlice(), CabinetExclusionTracker (+42 more)
+Cohesion: 0.06
+Nodes (51): Step 5: Test-Driven Verification (TDD), Phase 2: In-Page Harvest Engine Integration (`extension/injected.js`), RFC-4180, ALL_APOLLO_SENIORITIES, buildChunkedCleanOutreachCSV(), buildExclusionPayload(), buildHashForSlice(), calculateProbePacingDelay() (+43 more)
 
 ### Community 29 - "review_station_server.mjs"
 Cohesion: 0.18
@@ -296,8 +297,8 @@ Nodes (4): ffmpegPath, outDir, times, videoFile
 
 ## Knowledge Gaps
 - **1 isolated node(s):** `RFC-4180`
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 452 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **5 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 453 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **6 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -309,7 +310,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **What connects `RFC-4180` to the rest of the system?**
   _1 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `compare_csvs.mjs` be split into smaller, more focused modules?**
-  _Cohesion score 0.05384615384615385 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05398110661268556 - nodes in this community are weakly interconnected._
 - **Why does `AdaptivePacer` connect `PersistentOrgCache` to `slicer_core.js`, `SmartBatcher`?**
   _High betweenness centrality (0.019) - this node is a cross-community bridge._
 - **Should `SmartBatcher` be split into smaller, more focused modules?**

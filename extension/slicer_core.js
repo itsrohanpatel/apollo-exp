@@ -2432,6 +2432,110 @@ export class AdaptivePacer {
   }
 }
 
+
+// 18b. Clean 28-Column Outreach Standard Schema
+export const CLEAN_OUTREACH_COLUMNS_28 = [
+  { header: 'First Name', key: 'first_name' },
+  { header: 'Last Name', key: 'last_name' },
+  { header: 'Full Name', key: 'full_name' },
+  { header: 'Job Title', key: 'title' },
+  { header: 'Seniority', key: 'seniority' },
+  { header: 'Email', key: 'email' },
+  { header: 'Email Status', key: 'email_status' },
+  { header: 'Extrapolated Email', key: 'extrapolated_email' },
+  { header: 'Phone', key: 'phone' },
+  { header: 'LinkedIn URL', key: 'linkedin_url' },
+  { header: 'Headline', key: 'headline' },
+  { header: 'City', key: 'city' },
+  { header: 'State', key: 'state' },
+  { header: 'Country', key: 'country' },
+  { header: 'Time Zone', key: 'time_zone' },
+  { header: 'Company Name', key: 'company_name' },
+  { header: 'Company Domain', key: 'company_domain' },
+  { header: 'Company Website', key: 'company_website' },
+  { header: 'Company LinkedIn', key: 'company_linkedin' },
+  { header: 'Company Employees', key: 'company_employees' },
+  { header: 'Company Industry', key: 'company_industry' },
+  { header: 'Company Keywords', key: 'company_keywords' },
+  { header: 'Company Phone', key: 'company_phone' },
+  { header: 'Company Founded Year', key: 'company_founded_year' },
+  { header: 'ICP Tier', key: 'icp_tier' },
+  { header: 'ICP Score', key: 'icp_score' },
+  { header: 'Apollo Lead ID', key: 'id' },
+  { header: 'Apollo Org ID', key: 'company_id' }
+];
+
+export function buildChunkedCleanOutreachCSV(items = [], chunkSize = 2500) {
+  if (!items || items.length === 0) return [''];
+
+  const headers = CLEAN_OUTREACH_COLUMNS_28.map(c => c.header);
+  const headerLine = '\uFEFF' + headers.join(',') + '\r\n';
+  const chunks = [headerLine];
+
+  const size = Math.max(1, chunkSize);
+  for (let i = 0; i < items.length; i += size) {
+    const slice = items.slice(i, i + size);
+    const rowLines = slice.map(item => {
+      return CLEAN_OUTREACH_COLUMNS_28.map(col => {
+        let val = '';
+        if (col.key === 'email') {
+          const rawEmail = item.email || '';
+          const isLocked = !rawEmail || rawEmail.includes('email_not_unlocked');
+          val = !isLocked ? rawEmail : (item.extrapolated_email || '');
+        } else if (col.key === 'phone') {
+          val = item.phone || item.company_phone || item.organization_phone || '';
+        } else if (col.key === 'company_keywords') {
+          val = item.company_keywords || item.keywords || item.organization_keywords || '';
+        } else if (col.key === 'full_name') {
+          val = item.full_name || item.name || `${item.first_name || ''} ${item.last_name || ''}`.trim();
+        } else if (col.key === 'company_name') {
+          val = item.company_name || item.organization_name || '';
+        } else if (col.key === 'company_domain') {
+          val = item.company_domain || item.organization_domain || item.organization_primary_domain || '';
+        } else if (col.key === 'company_website') {
+          val = item.company_website || item.organization_website_url || '';
+        } else if (col.key === 'company_linkedin') {
+          val = item.company_linkedin || item.organization_linkedin_url || '';
+        } else if (col.key === 'company_employees') {
+          val = item.company_employees || item.organization_estimated_num_employees || '';
+        } else if (col.key === 'company_industry') {
+          val = item.company_industry || item.organization_industries || '';
+        } else if (col.key === 'company_phone') {
+          val = item.company_phone || item.organization_phone || '';
+        } else if (col.key === 'company_founded_year') {
+          val = item.company_founded_year || item.organization_founded_year || item.account_founded_year || '';
+        } else if (col.key === 'company_id') {
+          val = item.company_id || item.organization_id || '';
+        } else {
+          val = item[col.key];
+        }
+
+        if (val === null || val === undefined) {
+          val = '';
+        } else if (typeof val === 'object') {
+          val = JSON.stringify(val);
+        } else {
+          val = String(val);
+        }
+
+        val = val.replace(/[\r\n]+/g, ' ').trim();
+        if (/^[=+\-@\t\r]/.test(val)) {
+          val = "'" + val;
+        }
+
+        if (val.includes('"') || val.includes(',') || val.includes('\n') || val.includes('\r')) {
+          val = `"${val.replace(/"/g, '""')}"`;
+        }
+        return val;
+      }).join(',');
+    }).join('\r\n');
+
+    chunks.push(i + size < items.length ? rowLines + '\r\n' : rowLines);
+  }
+
+  return chunks;
+}
+
 // 19. ECC Data Throughput Accelerator: Chunked Memory-Streaming CSV Generator
 export function buildChunkedUnionCSV(items, preferredOrder = [], chunkSize = 2500) {
   if (!items || items.length === 0) return [''];

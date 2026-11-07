@@ -262,3 +262,65 @@ test('client-side employee constraint filters correctly across all 4 headcount p
   assert.equal(filtered.length, 3);
   assert.deepEqual(filtered.map(p => p.id), ['1', '5', '6']);
 });
+
+test('buildChunkedCleanOutreachCSV formats canonical 28 clean columns as default', async () => {
+  const { buildChunkedCleanOutreachCSV, CLEAN_OUTREACH_COLUMNS_28 } = await import('../extension/slicer_core.js');
+
+  assert.equal(CLEAN_OUTREACH_COLUMNS_28.length, 28);
+  assert.equal(CLEAN_OUTREACH_COLUMNS_28[0].header, 'First Name');
+  assert.equal(CLEAN_OUTREACH_COLUMNS_28[21].header, 'Company Keywords');
+  assert.equal(CLEAN_OUTREACH_COLUMNS_28[27].header, 'Apollo Org ID');
+
+  const mockLeads = [
+    {
+      id: 'lead_1',
+      first_name: 'Jerry',
+      last_name: 'Leone',
+      title: 'VP Sales',
+      seniority: 'vp',
+      email: 'email_not_unlocked@domain.com',
+      extrapolated_email: 'jerry.leone@abc.com',
+      email_status: 'extrapolated',
+      phone: '',
+      linkedin_url: 'https://linkedin.com/in/jerryleone',
+      headline: 'VP Sales at ABC',
+      city: 'Delhi',
+      state: 'Delhi',
+      country: 'India',
+      time_zone: 'Asia/Kolkata',
+      company_name: 'ABC Corp',
+      company_domain: 'abc.com',
+      company_website: 'https://abc.com',
+      company_linkedin: 'https://linkedin.com/company/abc',
+      company_employees: 50,
+      company_industry: 'Software',
+      company_keywords: 'saas; cloud; ai',
+      company_phone: '+91 11493 43900',
+      company_founded_year: 2010,
+      icp_tier: 'Tier 1 (High Priority)',
+      icp_score: 85,
+      company_id: 'org_1'
+    }
+  ];
+
+  const chunks = buildChunkedCleanOutreachCSV(mockLeads);
+  const fullCsv = chunks.join('');
+
+  // 1. Must start with UTF-8 BOM
+  assert.ok(fullCsv.startsWith('\uFEFF'));
+
+  // 2. Header line must contain exactly the 28 columns
+  const lines = fullCsv.replace('\uFEFF', '').trim().split('\r\n');
+  const headers = lines[0].split(',');
+  assert.equal(headers.length, 28);
+  assert.deepEqual(headers, CLEAN_OUTREACH_COLUMNS_28.map(c => c.header));
+
+  // 3. Fallback logic: email should be extrapolated when unlocked is unavailable
+  const row = lines[1].split(',');
+  // Column 5: Email (index 5)
+  assert.equal(row[5], 'jerry.leone@abc.com');
+  // Column 8: Phone falls back to company phone (index 8)
+  assert.equal(row[8], "'+91 11493 43900");
+  // Column 21: Company Keywords (index 21)
+  assert.equal(row[21], 'saas; cloud; ai');
+});

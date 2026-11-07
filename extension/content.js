@@ -27,8 +27,10 @@
     DeduplicationStore,
     generatePacingDelay,
     buildChunkedUnionCSV,
+    buildChunkedCleanOutreachCSV,
     normalizePersonComprehensive,
-    PREFERRED_PERSON_COLUMNS
+    PREFERRED_PERSON_COLUMNS,
+    CLEAN_OUTREACH_COLUMNS_28
   } = slicerCore;
   const { ApolloHUD } = hudModule;
 
@@ -545,14 +547,26 @@
       return;
     }
 
-    // Normalize records into canonical 29-column schema (0 nested JSON, zero data loss)
-    const normalizedLeads = allLeads.map(lead => {
-      return typeof normalizePersonComprehensive === 'function'
-        ? normalizePersonComprehensive(lead)
-        : lead;
-    });
-
-    const csvContent = buildChunkedUnionCSV(normalizedLeads, PREFERRED_PERSON_COLUMNS);
+    const isCompany = allLeads[0]?._entityType === 'companies';
+    let csvContent;
+    if (isCompany) {
+      const normalizedLeads = allLeads.map(lead => {
+        return typeof normalizeCompanyComprehensive === 'function'
+          ? normalizeCompanyComprehensive(lead)
+          : lead;
+      });
+      csvContent = buildChunkedUnionCSV(normalizedLeads, PREFERRED_COMPANY_COLUMNS);
+    } else {
+      const normalizedLeads = allLeads.map(lead => {
+        return typeof normalizePersonComprehensive === 'function'
+          ? normalizePersonComprehensive(lead)
+          : lead;
+      });
+      // Default to clean 28-column outreach schema (0 clutter, 100% CRM ready)
+      csvContent = typeof buildChunkedCleanOutreachCSV === 'function'
+        ? buildChunkedCleanOutreachCSV(normalizedLeads)
+        : buildChunkedUnionCSV(normalizedLeads, PREFERRED_PERSON_COLUMNS);
+    }
     chrome.runtime.sendMessage({
       type: 'APOLLO_DOWNLOAD_CSV',
       csv: csvContent,
