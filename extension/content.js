@@ -132,55 +132,6 @@
     });
   }
 
-  function directFetchHarvestPage({ page = 1, sort, cabinet = {}, baseFilters = {}, timeoutMs = 8000 }) {
-    return new Promise((resolve) => {
-      const requestId = 'fetch_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-      let timer = null;
-
-      const handler = (evt) => {
-        if (evt.data && evt.data.type === 'APOLLO_DIRECT_FETCH_PAGE_RESULT' && evt.data.requestId === requestId) {
-          window.removeEventListener('message', handler);
-          if (timer) clearTimeout(timer);
-          if (evt.data.success && evt.data.data) {
-            resolve(evt.data.data);
-          } else {
-            resolve(null);
-          }
-        }
-      };
-
-      window.addEventListener('message', handler);
-      timer = setTimeout(() => {
-        window.removeEventListener('message', handler);
-        resolve(null);
-      }, timeoutMs);
-
-      const filters = {};
-      if (cabinet.bracket) {
-        filters.organization_num_employees_ranges = Array.isArray(cabinet.bracket) ? cabinet.bracket : [cabinet.bracket];
-      }
-      if (cabinet.seniority && cabinet.seniority !== 'All') {
-        filters.person_seniorities = Array.isArray(cabinet.seniority) ? cabinet.seniority : [cabinet.seniority];
-      }
-      if (cabinet.emailStatus && cabinet.emailStatus !== 'All') {
-        filters.contact_email_status = Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus : [cabinet.emailStatus];
-      }
-      if (cabinet.subdepartment) {
-        filters.person_department_or_subdepartments = [cabinet.subdepartment];
-      } else if (cabinet.department) {
-        filters.person_department_or_subdepartments = [cabinet.department];
-      }
-
-      window.postMessage({
-        type: 'APOLLO_DIRECT_FETCH_PAGE',
-        requestId,
-        page,
-        sort,
-        filters
-      }, '*');
-    });
-  }
-
   async function probeDensity(filters, attempt = 1) {
     while (isPaused && !harvestAbort) {
       if (hud) hud.setStatus('⏸ Preflight Probing paused by operator');
@@ -550,37 +501,23 @@
           isLatencySpike: currentIsSpike
         });
 
-        let data = null;
-        const reqStart1 = performance.now();
+        const waitPromise = waitForBatch();
 
-        // Direct Main-World Fetch (Instant, zero DOM freeze, immune to pagination UI changes)
-        if (window.__APOLLO_DIRECT_FETCH_ENABLED__ !== false) {
-          data = await directFetchHarvestPage({
-            page,
+        if (page === 1) {
+          const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
+          window.postMessage({
+            type: 'APOLLO_NAVIGATE_HASH',
+            hash: newHash,
             sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true },
-            cabinet,
-            baseFilters
-          });
+            resetPage1: true
+          }, '*');
+          window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+        } else {
+          window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
         }
 
-        // Fallback to UI Hash Navigation & DOM Pagination
-        if (!data) {
-          const waitPromise = waitForBatch();
-          if (page === 1) {
-            const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
-            window.postMessage({
-              type: 'APOLLO_NAVIGATE_HASH',
-              hash: newHash,
-              sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true },
-              resetPage1: true
-            }, '*');
-            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
-          } else {
-            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
-          }
-          data = await waitPromise;
-        }
-
+        const reqStart1 = performance.now();
+        let data = await waitPromise;
         const reqLatencyMs1 = Math.round(performance.now() - reqStart1);
         telemetry.recordRequest(reqLatencyMs1);
 
@@ -828,37 +765,23 @@
             latencyMs: currentLatencyMs,
             isLatencySpike: currentIsSpike
           });
-          let data = null;
-          const reqStart2 = performance.now();
+          const waitPromise = waitForBatch();
 
-          // Direct Main-World Fetch (Fast Z-A retrieval)
-          if (window.__APOLLO_DIRECT_FETCH_ENABLED__ !== false) {
-            data = await directFetchHarvestPage({
-              page,
+          if (page === 1) {
+            const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
+            window.postMessage({
+              type: 'APOLLO_NAVIGATE_HASH',
+              hash: newHash,
               sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false },
-              cabinet,
-              baseFilters
-            });
+              resetPage1: true
+            }, '*');
+            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+          } else {
+            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
           }
 
-          // Fallback to UI Hash Navigation & DOM Pagination
-          if (!data) {
-            const waitPromise = waitForBatch();
-            if (page === 1) {
-              const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
-              window.postMessage({
-                type: 'APOLLO_NAVIGATE_HASH',
-                hash: newHash,
-                sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false },
-                resetPage1: true
-              }, '*');
-              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
-            } else {
-              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
-            }
-            data = await waitPromise;
-          }
-
+          const reqStart2 = performance.now();
+          let data = await waitPromise;
           const reqLatencyMs2 = Math.round(performance.now() - reqStart2);
           telemetry.recordRequest(reqLatencyMs2);
 
