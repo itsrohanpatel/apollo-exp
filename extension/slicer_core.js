@@ -4,6 +4,12 @@
  */
 
 // 1. Universal Headcount Brackets
+export const APOLLO_PAGE_SIZE = 30;
+export const MAX_STANDARD_PAGES = 5;
+export const MAX_TOP_DOWN_LEADS = APOLLO_PAGE_SIZE * MAX_STANDARD_PAGES; // 150
+export const MAX_BIDIRECTIONAL_PAGES = 10;
+export const MAX_BIDIRECTIONAL_LEADS = APOLLO_PAGE_SIZE * MAX_BIDIRECTIONAL_PAGES; // 300
+
 export const UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS = [
   ['1,10'],
   ['11,20'],
@@ -118,7 +124,8 @@ export function shouldEarlyExitHarvest({
   sliceHarvested = 0,
   sliceTotal = null,
   addedInPage = 0,
-  rawPeopleCount = 0
+  rawPeopleCount = 0,
+  pageSize = APOLLO_PAGE_SIZE
 } = {}) {
   // 1. If sliceTotal is known and all available leads have been harvested, complete cabinet immediately
   if (typeof sliceTotal === 'number' && sliceTotal > 0 && sliceHarvested >= sliceTotal) {
@@ -147,8 +154,8 @@ export function shouldEarlyExitHarvest({
     };
   }
 
-  // 4. Natural last page of cabinet (less than full page of 25 leads returned)
-  if (rawPeopleCount < 25) {
+  // 4. Natural last page of cabinet (less than full page of leads returned)
+  if (rawPeopleCount < pageSize) {
     return {
       shouldExit: true,
       status: 'LAST_PAGE_OF_CABINET',
@@ -924,15 +931,15 @@ export function buildCabinetDrainPayload(basePayload, bracket, cabinetTracker) {
   return payload;
 }
 
-// 12. Bracket Subdivision Threshold Detector (Detects pools > 250 leads needing micro-slicing)
+// 12. Bracket Subdivision Threshold Detector (Detects pools > 300 leads needing micro-slicing)
 export function shouldSubdivideBracket(totalEntries) {
-  return typeof totalEntries === 'number' && totalEntries > 250;
+  return typeof totalEntries === 'number' && totalEntries > MAX_BIDIRECTIONAL_LEADS;
 }
 
-// 13. Bidirectional Sort Plan Generator (Enables 250-lead capture per bracket: top 125 + bottom 125)
+// 13. Bidirectional Sort Plan Generator (Enables 300-lead capture per bracket: top 150 + bottom 150)
 export function generateBidirectionalSortPlans(totalEntries) {
   const plans = [{ sort_ascending: false, label: 'top' }];
-  if (typeof totalEntries === 'number' && totalEntries > 125) {
+  if (typeof totalEntries === 'number' && totalEntries > MAX_TOP_DOWN_LEADS) {
     plans.push({ sort_ascending: true, label: 'bottom' });
   }
   return plans;
@@ -1280,7 +1287,7 @@ export class SmartBatcher {
  *  3. Email Status (if min === max, seniority is set, and emailStatus is null)
  */
 export function subdivideCabinet(cabinet = {}, totalEntries = 0, options = {}) {
-  const maxLimit = options.maxLeadsPerCabinet || 250;
+  const maxLimit = options.maxLeadsPerCabinet || MAX_BIDIRECTIONAL_LEADS;
   if (!totalEntries || totalEntries <= maxLimit) {
     return [cabinet];
   }
@@ -3167,7 +3174,8 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     throw new Error('probeFn must be an async function returning total_entries count');
   }
 
-  const maxLimit = options.maxLeadsPerCabinet !== undefined ? options.maxLeadsPerCabinet : 125;
+  const maxLimit = options.maxLeadsPerCabinet !== undefined ? options.maxLeadsPerCabinet : MAX_TOP_DOWN_LEADS;
+  const bidirectionalLimit = options.maxBidirectionalLeads !== undefined ? options.maxBidirectionalLeads : MAX_BIDIRECTIONAL_LEADS;
   const isCompanies = options.isCompanies || false;
   const onProbeProgress = options.onProbeProgress || null;
   const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : null;
@@ -3272,7 +3280,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     return options.detailed ? { cabinets: [], auditLog } : [];
   }
 
-  if (typeof rootTotal === 'number' && rootTotal > 0 && (rootTotal <= maxLimit || (options.initialTotal !== undefined && rootTotal <= 250))) {
+  if (typeof rootTotal === 'number' && rootTotal > 0 && (rootTotal <= maxLimit || (options.initialTotal !== undefined && rootTotal <= bidirectionalLimit))) {
     let singleLabel = customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0][0] : String(customRanges[0])) : 'All Matching Leads';
     let bracket = customRanges && customRanges.length === 1 ? (Array.isArray(customRanges[0]) ? customRanges[0] : [String(customRanges[0])]) : null;
 
@@ -3308,8 +3316,8 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       emailStatus: null,
       keyword: null,
       total: rootTotal,
-      pagesNeeded: Math.min(5, Math.ceil(rootTotal / 25)),
-      mode: rootTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
+      pagesNeeded: Math.min(5, Math.ceil(rootTotal / APOLLO_PAGE_SIZE)),
+      mode: rootTotal <= MAX_TOP_DOWN_LEADS ? 'Top-Down Only' : 'Bidirectional'
     };
 
     logAudit({
@@ -3317,7 +3325,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       label: singleCabinet.label,
       bracket: bracket ? bracket[0] : 'All',
       leadsCount: rootTotal,
-      decision: `Total leads (${rootTotal}) <= ${options.initialTotal !== undefined ? 250 : maxLimit}. Short-circuiting directly to 1 unified cabinet.`,
+      decision: `Total leads (${rootTotal}) <= ${options.initialTotal !== undefined ? bidirectionalLimit : maxLimit}. Short-circuiting directly to 1 unified cabinet.`,
       mode: singleCabinet.mode,
       pagesNeeded: singleCabinet.pagesNeeded
     });
@@ -3405,17 +3413,16 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       await sleepFn(delayMs);
     }
 
-    // Single-integer headcounts (min === max) have 250-lead capacity via Bidirectional sweep
-    const singleHeadcountThreshold = (item.min === item.max) ? 250 : maxLimit;
-    if (typeof count === 'number' && count <= singleHeadcountThreshold) {
-      const mode = count <= 125 ? 'Top-Down Only' : 'Bidirectional';
-      const pagesNeeded = Math.min(10, Math.ceil(count / 25));
+    // All headcounts (both single-integer and continuous ranges) have 300-lead capacity via Bidirectional sweep
+    if (typeof count === 'number' && count <= bidirectionalLimit) {
+      const mode = count <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+      const pagesNeeded = Math.min(10, Math.ceil(count / APOLLO_PAGE_SIZE));
       logAudit({
         type: 'BRACKET_PROBE',
         label: item.label,
         bracket: item.label,
         leadsCount: count,
-        decision: `Within safe limit (${count} <= ${singleHeadcountThreshold} leads). Approved as cabinet [${item.label}].`,
+        decision: `Within safe limit (${count} <= ${bidirectionalLimit} leads). Approved as cabinet [${item.label}].`,
         mode,
         pagesNeeded
       });
@@ -3432,7 +3439,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       continue;
     }
 
-    // Bisect headcount whenever min < max
+    // Bisect headcount whenever min < max and density exceeds bidirectionalLimit
     if (item.min < item.max) {
       const mid = Math.floor((item.min + item.max) / 2);
       const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
@@ -3442,7 +3449,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         label: item.label,
         bracket: item.label,
         leadsCount: count,
-        decision: `Density ceiling exceeded (${count} > ${maxLimit} leads). Bisected range into [${left.label}] and [${right.label}].`
+        decision: `Density ceiling exceeded (${count} > ${bidirectionalLimit} leads). Bisected range into [${left.label}] and [${right.label}].`
       });
       queue.unshift(right);
       queue.unshift(left);
@@ -3522,7 +3529,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       label: item.label,
       bracket: item.label,
       leadsCount: count,
-      decision: `Single headcount density ceiling exceeded (${count} > ${singleHeadcountThreshold} leads). Pivoting to ${seniorities.length} Apollo seniorities.`
+      decision: `Single headcount density ceiling exceeded (${count} > ${bidirectionalLimit} leads). Pivoting to ${seniorities.length} Apollo seniorities.`
     });
 
     for (const sen of seniorities) {
@@ -3554,17 +3561,17 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         await sleepFn(delayMs);
       }
 
-      // Seniority slices have 250-lead capacity via Bidirectional sweep
-      if (typeof senCount === 'number' && senCount <= 250) {
-        const mode = senCount <= 125 ? 'Top-Down Only' : 'Bidirectional';
-        const pagesNeeded = Math.min(10, Math.ceil(senCount / 25));
+      // Seniority slices have 300-lead capacity via Bidirectional sweep
+      if (typeof senCount === 'number' && senCount <= bidirectionalLimit) {
+        const mode = senCount <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+        const pagesNeeded = Math.min(10, Math.ceil(senCount / APOLLO_PAGE_SIZE));
         logAudit({
           type: 'SENIORITY_PROBE',
           label: `${item.label} ${sen}`,
           bracket: item.label,
           seniority: sen,
           leadsCount: senCount,
-          decision: `Within safe limit (${senCount} <= 250 leads). Approved as cabinet [${item.label} ${sen}].`,
+          decision: `Within safe limit (${senCount} <= ${bidirectionalLimit} leads). Approved as cabinet [${item.label} ${sen}].`,
           mode,
           pagesNeeded
         });
@@ -3593,7 +3600,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         bracket: item.label,
         seniority: sen,
         leadsCount: senCount,
-        decision: `Seniority density ceiling exceeded (${senCount} > ${maxLimit} leads). Pivoting to ${activeEmailPartitions.length} email status partitions.`
+        decision: `Seniority density ceiling exceeded (${senCount} > ${bidirectionalLimit} leads). Pivoting to ${activeEmailPartitions.length} email status partitions.`
       });
 
       for (const emailPartition of activeEmailPartitions) {
@@ -3627,8 +3634,8 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
           await sleepFn(delayMs);
         }
 
-        // Level 4: Sub-Department / Functional Pivot only if email partition exceeds 250 leads (bidirectional capacity)
-        if (typeof emailCount === 'number' && emailCount > 250) {
+        // Level 4: Sub-Department / Functional Pivot only if email partition exceeds 300 leads (bidirectional capacity)
+        if (typeof emailCount === 'number' && emailCount > bidirectionalLimit) {
           const userDepts = Array.isArray(basePayload.person_department_or_subdepartments) && basePayload.person_department_or_subdepartments.length > 0
             ? basePayload.person_department_or_subdepartments
             : (Array.isArray(basePayload.personDepartmentOrSubdepartments) ? basePayload.personDepartmentOrSubdepartments : []);
@@ -3644,7 +3651,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
               seniority: sen,
               emailStatus: emailPartition.key,
               leadsCount: emailCount,
-              decision: `Email partition density ceiling exceeded (${emailCount} > 250 leads). Pivoting to ${availableSubdepts.length} sub-departments under ${masterDeptKey}.`
+              decision: `Email partition density ceiling exceeded (${emailCount} > ${bidirectionalLimit} leads). Pivoting to ${availableSubdepts.length} sub-departments under ${masterDeptKey}.`
             });
 
             let subTotal = 0;
@@ -3682,8 +3689,8 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
                 await sleepFn(delayMs);
               }
 
-              const subMode = subCount <= 125 ? 'Top-Down Only' : 'Bidirectional';
-              const subPages = Math.min(10, Math.ceil(subCount / 25));
+              const subMode = subCount <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+              const subPages = Math.min(10, Math.ceil(subCount / APOLLO_PAGE_SIZE));
               subTotal += (typeof subCount === 'number' ? subCount : 0);
 
               logAudit({
@@ -3717,8 +3724,8 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
               }
               const untaggedCount = emailCount - subTotal;
               if (untaggedCount > 0) {
-                const untaggedMode = untaggedCount <= 125 ? 'Top-Down Only' : 'Bidirectional';
-                const untaggedPages = Math.min(10, Math.ceil(untaggedCount / 25));
+                const untaggedMode = untaggedCount <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+                const untaggedPages = Math.min(10, Math.ceil(untaggedCount / APOLLO_PAGE_SIZE));
                 logAudit({
                   type: 'SUBDEPARTMENT_PROBE',
                   label: `${item.label} ${sen} ${emailPartition.key} Untagged / General`,
@@ -3750,8 +3757,8 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
           }
         }
 
-        const mode = emailCount <= 125 ? 'Top-Down Only' : 'Bidirectional';
-        const pagesNeeded = Math.min(10, Math.ceil(emailCount / 25));
+        const mode = emailCount <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+        const pagesNeeded = Math.min(10, Math.ceil(emailCount / APOLLO_PAGE_SIZE));
         logAudit({
           type: 'EMAIL_PROBE',
           label: `${item.label} ${sen} ${emailPartition.key}`,
@@ -3873,8 +3880,8 @@ export function buildPreflightPlanCSV(cabinets = [], auditLog = [], options = {}
       const seniorityStr = c.seniority || (options.baseFilters?.person_seniorities?.join(';') || 'All');
       const emailStr = Array.isArray(c.emailStatus) ? c.emailStatus.join(';') : (c.emailStatus || options.baseFilters?.contact_email_status?.join(';') || 'All');
       const leadsStr = typeof c.total === 'number' ? c.total : (c.total || 'Dynamic');
-      const modeStr = c.mode || (typeof c.total === 'number' && c.total <= 125 ? 'Top-Down Only' : 'Bidirectional');
-      const pagesNeeded = c.pagesNeeded || (typeof c.total === 'number' ? Math.min(10, Math.ceil(c.total / 25)) : 5);
+      const modeStr = c.mode || (typeof c.total === 'number' && c.total <= maxLimit ? 'Top-Down Only' : 'Bidirectional');
+      const pagesNeeded = c.pagesNeeded || (typeof c.total === 'number' ? Math.min(10, Math.ceil(c.total / APOLLO_PAGE_SIZE)) : 5);
       const estSec = pagesNeeded * 3;
       const sliceHash = typeof buildHashForSlice === 'function' ? buildHashForSlice(currentHash, c, 'sanitized_organization_name_unanalyzed', true) : currentHash;
 

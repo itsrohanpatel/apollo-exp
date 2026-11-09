@@ -144,7 +144,7 @@
         per_page: 30,
         display_mode: 'metadata_mode',
         open_factor_names: [],
-        num_fetch_result: 25
+        num_fetch_result: 30
       };
       if (basePayload.organization_linkedin_urls) {
         fullPayload.organization_linkedin_urls = basePayload.organization_linkedin_urls;
@@ -263,7 +263,7 @@
     try {
       hud.setStatus('🔍 Probing search tree for 100% lead coverage...');
       cabinets = await resolveAdaptiveExecutionTree(probeDensity, baseFilters, {
-        maxLeadsPerCabinet: 125,
+        maxLeadsPerCabinet: 150,
         initialTotal,
         maxEmployees,
         decomposeEnterprise: true,
@@ -293,15 +293,15 @@
 
     const isOpenRange = (b) => typeof b === 'string' && (b.endsWith(',') || b.endsWith('+') || b.startsWith(','));
     if (!cabinets || (cabinets.length === 0 && !(typeof maxEmployees === 'number' && maxEmployees > 0)) || (cabinets.length === 1 && isOpenRange(cabinets[0].bracket?.[0]))) {
-      if (typeof initialTotal === 'number' && initialTotal <= 250) {
+      if (typeof initialTotal === 'number' && initialTotal <= 300) {
         cabinets = [{
           label: 'All Matching Leads',
           bracket: null,
           seniority: null,
           emailStatus: null,
           total: initialTotal,
-          pagesNeeded: Math.min(5, Math.ceil(initialTotal / 25)),
-          mode: initialTotal <= 125 ? 'Top-Down Only' : 'Bidirectional'
+          pagesNeeded: Math.min(5, Math.ceil(initialTotal / 30)),
+          mode: initialTotal <= 150 ? 'Top-Down Only' : 'Bidirectional'
         }];
       } else {
         const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true, maxEmployees });
@@ -350,7 +350,7 @@
       for (let j = currIdx + 1; j < cabinets.length; j++) {
         const c = cabinets[j];
         if (typeof c.total === 'number' && c.total > 0) {
-          rem += Math.min(10, Math.ceil(c.total / 25));
+          rem += Math.min(10, Math.ceil(c.total / 30));
         } else {
           rem += (c.mode === 'Bidirectional' ? 8 : 5);
         }
@@ -521,11 +521,11 @@
           }
 
           // 2. Dynamic Runtime Cabinet Reduction
-          // If total entries exceed 250 (max reachable with bidirectional sort), subdivide cabinet!
-          if (sliceTotal > 250) {
+          // If total entries exceed 300 (max reachable with bidirectional sort), subdivide cabinet!
+          if (sliceTotal > 300) {
             const subCabinets = subdivideCabinet(cabinet, sliceTotal, { baseFilters });
             if (subCabinets && subCabinets.length > 1) {
-              console.log(`[Apollo Extractor] ⚡ Cabinet [${sliceLabel}] has ${sliceTotal} leads (> 250 limit). Subdividing into ${subCabinets.length} sub-cabinets:`, subCabinets.map(s => s.label));
+              console.log(`[Apollo Extractor] ⚡ Cabinet [${sliceLabel}] has ${sliceTotal} leads (> 300 limit). Subdividing into ${subCabinets.length} sub-cabinets:`, subCabinets.map(s => s.label));
               cabinets.splice(i, 1, ...subCabinets);
               totalSlices = cabinets.length;
               hud.setStatus(`⚡ Subdivided [${sliceLabel}] (${sliceTotal} leads) into ${subCabinets.length} sub-cabinets...`);
@@ -660,7 +660,7 @@
 
       // --- DUAL-SORT CAPACITY BOOST (Pass 2: Z-A) ---
       const hasUncollectedLeads = sliceTotal === null || sliceHarvested < sliceTotal;
-      const shouldRunPass2 = hasUncollectedLeads && (cabinet.mode === 'Bidirectional' || sliceHarvested >= 25 || (sliceTotal !== null && sliceTotal > 25));
+      const shouldRunPass2 = hasUncollectedLeads && (cabinet.mode === 'Bidirectional' || sliceHarvested >= 30 || (sliceTotal !== null && sliceTotal > 30));
       if (!harvestAbort && shouldRunPass2 && dedupeStore.size() < targetLeadLimit) {
         hud.setStatus(`⚡ Capacity Boost: Executing Pass 2 (Z-A) for [${sliceLabel}]...`);
         hud.updateProgress({
