@@ -15,7 +15,10 @@ export class ApolloHUD {
     this.onExportPreflightPlan = options.onExportPreflightPlan || null;
     this.onExportHarvestAudit = options.onExportHarvestAudit || null;
     this.onExportCompanyCSV = options.onExportCompanyCSV || null;
+    this.onCancelPreflight = options.onCancelPreflight || null;
 
+    this.currentPhase = 'idle'; // 'idle' | 'preflight' | 'review' | 'harvest'
+    this.statusText = '';
     this.isPaused = false;
     this.isMinimized = false;
     this.isHarvesting = false;
@@ -353,17 +356,27 @@ export class ApolloHUD {
     }
   }
 
+  setPhase(phase) {
+    this.currentPhase = phase;
+  }
+
   togglePause() {
     const pauseBtn = this.container?.querySelector('#apollo-hud-pause-btn');
-    if (!pauseBtn || pauseBtn.style.display === 'none') return;
+    if (this.container && (!pauseBtn || pauseBtn.style.display === 'none')) return;
     this.isPaused = !this.isPaused;
     if (this.isPaused) {
       this.setHarvestState('paused');
-      this.setStatus('⏸ Harvest paused by operator');
+      const pauseMsg = this.currentPhase === 'preflight'
+        ? '⏸ Preflight Probing paused by operator'
+        : '⏸ Harvest paused by operator';
+      this.setStatus(pauseMsg);
       if (this.onPause) this.onPause();
     } else {
       this.setHarvestState('running');
-      this.setStatus('▶ Resuming harvest...');
+      const resumeMsg = this.currentPhase === 'preflight'
+        ? '▶ Resuming Preflight Probing...'
+        : '▶ Resuming harvest...';
+      this.setStatus(resumeMsg);
       if (this.onResume) this.onResume();
     }
   }
@@ -408,7 +421,23 @@ export class ApolloHUD {
 
     if (stopBtn) {
       stopBtn.addEventListener('click', () => {
-        if (confirm('Stop harvesting and export all collected leads to CSV now?')) {
+        if (this.currentPhase === 'review') {
+          if (typeof confirm !== 'function' || confirm('Cancel harvest and return to idle?')) {
+            this.setHarvestState('idle');
+            this.setStatus('Harvest cancelled by operator.');
+            if (this.onCancelPreflight) this.onCancelPreflight();
+          }
+          return;
+        }
+        if (this.currentPhase === 'preflight') {
+          if (typeof confirm !== 'function' || confirm('Stop preflight probing and cancel harvest?')) {
+            this.setHarvestState('idle');
+            this.setStatus('Preflight probing cancelled by operator.');
+            if (this.onStopAndExport) this.onStopAndExport();
+          }
+          return;
+        }
+        if (typeof confirm !== 'function' || confirm('Stop harvesting and export all collected leads to CSV now?')) {
           this.setStatus('Exporting CSV...');
           if (this.onStopAndExport) this.onStopAndExport();
         }
@@ -449,6 +478,7 @@ export class ApolloHUD {
   // --- 4. Preflight Review Gate & Drawer ---
   setPreflightReviewReady(data = {}) {
     if (!this.container) return;
+    this.currentPhase = 'review';
     const {
       totalSlices = 0,
       totalLeads = 0,
@@ -456,11 +486,13 @@ export class ApolloHUD {
       bisectionCount = 0,
       sliceList = [],
       onStart,
+      onCancel,
       onExportCSV
     } = data;
 
     this.preflightData = data;
     if (typeof onStart === 'function') this.onConfirmStart = onStart;
+    if (typeof onCancel === 'function') this.onCancelPreflight = onCancel;
     if (typeof onExportCSV === 'function') this.onExportPreflightPlan = onExportCSV;
 
     const startBtn = this.container.querySelector('#apollo-hud-start-btn');
@@ -715,6 +747,7 @@ export class ApolloHUD {
         pauseBtn.className = 'apollo-hud-btn apollo-hud-btn-primary apollo-hud-btn-glow';
       }
     } else if (state === 'completed') {
+      this.currentPhase = 'idle';
       this.isHarvesting = false;
       this.isPaused = false;
       if (dot) dot.className = 'apollo-hud-pulsing-dot dot-complete';
@@ -737,6 +770,7 @@ export class ApolloHUD {
       if (auditBtn) auditBtn.style.display = 'flex';
     } else {
       // idle
+      this.currentPhase = 'idle';
       this.isHarvesting = false;
       this.isPaused = false;
       if (dot) dot.className = 'apollo-hud-pulsing-dot';
@@ -873,6 +907,7 @@ export class ApolloHUD {
   }
 
   setStatus(text) {
+    this.statusText = text;
     if (!this.container) return;
     const txtEl = this.container.querySelector('#apollo-hud-status-txt');
     if (txtEl) txtEl.innerText = text;

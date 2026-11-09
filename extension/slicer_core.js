@@ -3184,8 +3184,22 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
   const onProbeProgress = options.onProbeProgress || null;
   const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : null;
   const probePacing = options.probePacing || {};
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
+  const isPaused = typeof options.isPaused === 'function' ? options.isPaused : () => false;
+  const checkPause = typeof options.checkPause === 'function' ? options.checkPause : null;
   const optimalUnits = [];
   const auditLog = Array.isArray(options.auditLog) ? options.auditLog : [];
+
+  const checkPauseAndAbort = async () => {
+    if (checkPause) {
+      await checkPause();
+    } else if (isPaused) {
+      while (isPaused() && !isAborted()) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+    }
+    return isAborted();
+  };
 
   const logAudit = (entry) => {
     auditLog.push({
@@ -3265,7 +3279,9 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
   // Short-Circuit Check: If search has <= maxLimit * 2 leads, execute as 1 single cabinet!
   let rootTotal = options.initialTotal !== undefined ? options.initialTotal : null;
   if (rootTotal === null && (!customRanges || customRanges.length <= 1)) {
+    if (await checkPauseAndAbort()) return options.detailed ? { cabinets: [], auditLog, aborted: true } : [];
     rootTotal = await probeFn(customRanges && customRanges.length === 1 ? { organization_num_employees_ranges: customRanges } : {});
+    if (await checkPauseAndAbort()) return options.detailed ? { cabinets: [], auditLog, aborted: true } : [];
     if (onProbeProgress) onProbeProgress({ type: 'ROOT_PROBE', total: rootTotal });
   }
 
@@ -3368,8 +3384,10 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
   const queue = [...startingBrackets];
 
   while (queue.length > 0) {
+    if (await checkPauseAndAbort()) break;
     const item = queue.shift();
     const count = await probeFn({ organization_num_employees_ranges: [item.label] });
+    if (await checkPauseAndAbort()) break;
     if (onProbeProgress) onProbeProgress({ type: 'BRACKET_PROBE', label: item.label, total: count });
 
     if (count === 0) {
@@ -3541,10 +3559,12 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     });
 
     for (const sen of seniorities) {
+      if (await checkPauseAndAbort()) break;
       const senCount = await probeFn({
         organization_num_employees_ranges: [item.label],
         person_seniorities: [sen]
       });
+      if (await checkPauseAndAbort()) break;
       if (onProbeProgress) onProbeProgress({ type: 'SENIORITY_PROBE', label: `${item.label} ${sen}`, total: senCount });
 
       if (senCount === 0) {
@@ -3612,11 +3632,13 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       });
 
       for (const emailPartition of activeEmailPartitions) {
+        if (await checkPauseAndAbort()) break;
         const emailCount = await probeFn({
           organization_num_employees_ranges: [item.label],
           person_seniorities: [sen],
           contact_email_status: emailPartition.values
         });
+        if (await checkPauseAndAbort()) break;
         if (onProbeProgress) onProbeProgress({ type: 'EMAIL_PROBE', label: `${item.label} ${sen} ${emailPartition.key}`, total: emailCount });
 
         if (emailCount === 0) {
@@ -3666,12 +3688,14 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
             const subCabinets = [];
 
             for (const sub of availableSubdepts) {
+              if (await checkPauseAndAbort()) break;
               const subCount = await probeFn({
                 organization_num_employees_ranges: [item.label],
                 person_seniorities: [sen],
                 contact_email_status: emailPartition.values,
                 person_department_or_subdepartments: [sub.queryKey]
               });
+              if (await checkPauseAndAbort()) break;
               if (onProbeProgress) onProbeProgress({ type: 'SUBDEPARTMENT_PROBE', label: `${item.label} ${sen} ${emailPartition.key} ${sub.label}`, total: subCount });
 
               if (subCount === 0) {
@@ -3792,7 +3816,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     }
   }
 
-  return options.detailed ? { cabinets: optimalUnits, auditLog } : optimalUnits;
+  return options.detailed ? { cabinets: optimalUnits, auditLog, aborted: isAborted() } : optimalUnits;
 }
 
 // 27. Pre-flight Check & Adaptive Cabinet Design CSV Generator

@@ -133,6 +133,12 @@
   }
 
   async function probeDensity(filters, attempt = 1) {
+    while (isPaused && !harvestAbort) {
+      if (hud) hud.setStatus('⏸ Preflight Probing paused by operator');
+      await new Promise(r => setTimeout(r, 200));
+    }
+    if (harvestAbort) return null;
+
     const result = await new Promise((resolve) => {
       const requestId = 'probe_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
       const currentHash = window.location.hash || '';
@@ -177,7 +183,13 @@
       }, '*');
     });
 
-    if (result === null && attempt < 2) {
+    while (isPaused && !harvestAbort) {
+      if (hud) hud.setStatus('⏸ Preflight Probing paused by operator');
+      await new Promise(r => setTimeout(r, 200));
+    }
+    if (harvestAbort) return null;
+
+    if (result === null && attempt < 2 && !harvestAbort) {
       console.warn('[Apollo Extractor] Density probe timed out or failed. Retrying once with 1500ms jitter...');
       await new Promise(r => setTimeout(r, 1500 + Math.floor(Math.random() * 500)));
       return probeDensity(filters, attempt + 1);
@@ -222,6 +234,7 @@
     harvestPageAuditRecords = [];
 
     ensureHUD();
+    hud.setPhase('preflight');
     hud.setHarvestState('running');
     hud.setStatus('⚡ Analyzing search parameters & probing density...');
 
@@ -269,6 +282,8 @@
         decomposeEnterprise: true,
         auditLog: preflightAuditLog,
         sleepFn: sleepWithCountdown,
+        isAborted: () => harvestAbort,
+        isPaused: () => isPaused,
         probePacing: {
           minDelay: 800,
           maxDelay: 1600,
@@ -276,6 +291,7 @@
           zeroMaxDelay: 1000
         },
         onProbeProgress: (p) => {
+          if (isPaused) return;
           if (p.type === 'BRACKET_PROBE') {
             hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads found...`);
           } else if (p.type === 'SENIORITY_PROBE') {
@@ -289,6 +305,16 @@
       });
     } catch (e) {
       console.warn('[Apollo Extractor] Adaptive tree resolution error, falling back to macro brackets:', e);
+    }
+
+    if (harvestAbort) {
+      console.log('[Apollo Extractor] Preflight probing cancelled/stopped by operator.');
+      if (hud) {
+        hud.setHarvestState('idle');
+        hud.setStatus('Preflight probing cancelled by operator.');
+      }
+      isHarvesting = false;
+      return;
     }
 
     const isOpenRange = (b) => typeof b === 'string' && (b.endsWith(',') || b.endsWith('+') || b.startsWith(','));
@@ -382,16 +408,39 @@
       const bisectionCount = preflightAuditLog.filter(p => p.type === 'BISECTION_SPLIT').length;
 
       await new Promise((resolveStart) => {
+        let reviewDone = false;
+        const finishReview = () => {
+          if (!reviewDone) {
+            reviewDone = true;
+            resolveStart();
+          }
+        };
         hud.setPreflightReviewReady({
           totalSlices,
           totalLeads: totalExpectedLeads,
           currentEtaSeconds,
           bisectionCount,
           sliceList: cabinets,
-          onStart: () => resolveStart(),
+          onStart: finishReview,
+          onCancel: () => {
+            harvestAbort = true;
+            finishReview();
+          },
           onExportCSV: () => exportPreflightPlanCSV()
         });
       });
+
+      if (harvestAbort) {
+        console.log('[Apollo Extractor] Harvest cancelled in preflight review gate.');
+        if (hud) {
+          hud.setHarvestState('idle');
+          hud.setStatus('Harvest cancelled by operator.');
+        }
+        isHarvesting = false;
+        return;
+      }
+
+      hud.setPhase('harvest');
       hud.setHarvestState('running');
       hud.setStatus(`⚡ Starting live harvest across ${totalSlices} cabinets...`);
     }
@@ -862,11 +911,25 @@
 
   async function sleepWithCountdown(ms) {
     const totalSec = Math.ceil(ms / 1000);
-    for (let s = totalSec; s >= 0; s--) {
-      if (hud) hud.setPacingTimer(s, totalSec);
-      await new Promise(r => setTimeout(r, Math.min(ms, 1000)));
-      ms -= 1000;
-      if (ms <= 0) break;
+    let remainingMs = ms;
+    while (remainingMs > 0 && !harvestAbort) {
+      while (isPaused && !harvestAbort) {
+        if (hud) {
+          const pauseMsg = hud.currentPhase === 'preflight'
+            ? '⏸ Preflight Probing paused by operator'
+            : '⏸ Harvest paused by operator';
+          hud.setStatus(pauseMsg);
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (harvestAbort) break;
+      const tick = Math.min(remainingMs, 200);
+      await new Promise(r => setTimeout(r, tick));
+      remainingMs -= tick;
+      if (hud) {
+        const currentSec = Math.ceil(remainingMs / 1000);
+        hud.setPacingTimer(currentSec, totalSec);
+      }
     }
     if (hud) hud.setPacingTimer(0, totalSec);
   }
