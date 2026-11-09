@@ -15,6 +15,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnStartHarvest = document.getElementById('btnStartHarvest');
   const btnStopHarvest = document.getElementById('btnStopHarvest');
   const btnExportCSV = document.getElementById('btnExportCSV');
+  const btnExportCompanyCSV = document.getElementById('btnExportCompanyCSV');
+  const btnExportJSON = document.getElementById('btnExportJSON');
+  const btnExportCompanyJSON = document.getElementById('btnExportCompanyJSON');
+  const btnExportPreflightPlan = document.getElementById('btnExportPreflightPlan');
+  const btnExportHarvestAudit = document.getElementById('btnExportHarvestAudit');
   const btnClear = document.getElementById('btnClear');
   const previewContainer = document.getElementById('previewContainer');
 
@@ -30,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 2. Query Background Stats
   function updateStats() {
     chrome.runtime.sendMessage({ type: 'GET_BACKGROUND_STATS' }, (resp) => {
+      if (chrome.runtime.lastError) return;
       if (resp && typeof resp.totalInDB === 'number') {
         leadsCountEl.innerText = resp.totalInDB.toLocaleString();
         if (resp.totalInDB > 0) {
@@ -40,18 +46,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Check active tab harvest state
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) return;
       if (tabs[0] && tabs[0].id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_STATUS' }, (resp) => {
-          if (resp && resp.isHarvesting) {
-            btnStartHarvest.style.display = 'none';
-            btnStopHarvest.style.display = 'flex';
-            statusText.innerText = 'Harvesting via Authentic UI...';
-            statusIndicator.style.background = '#38bdf8';
-          } else {
-            btnStartHarvest.style.display = 'flex';
-            btnStopHarvest.style.display = 'none';
-            statusText.innerText = 'Engine Ready (UI Driven)';
-            statusIndicator.style.background = '#10b981';
+          if (chrome.runtime.lastError) return;
+          if (resp) {
+            if (typeof resp.totalCompanies === 'number' && companiesCountEl) {
+              companiesCountEl.innerText = resp.totalCompanies.toLocaleString();
+            }
+            if (resp.isHarvesting) {
+              btnStartHarvest.style.display = 'none';
+              btnStopHarvest.style.display = 'flex';
+              statusText.innerText = 'Harvesting via Authentic UI...';
+              statusIndicator.style.background = '#38bdf8';
+            } else {
+              btnStartHarvest.style.display = 'flex';
+              btnStopHarvest.style.display = 'none';
+              statusText.innerText = 'Engine Ready (UI Driven)';
+              statusIndicator.style.background = '#10b981';
+            }
           }
         });
       }
@@ -61,6 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 3. Start Harvest
   btnStartHarvest.addEventListener('click', () => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) return;
       const activeTab = tabs[0];
       if (!activeTab || !activeTab.url || !activeTab.url.includes('app.apollo.io')) {
         alert('Please open an active Apollo search tab first!');
@@ -72,6 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
         type: 'START_HARVEST',
         config: { targetLeadLimit: limit }
       }, (resp) => {
+        if (chrome.runtime.lastError) return;
         btnStartHarvest.style.display = 'none';
         btnStopHarvest.style.display = 'flex';
         statusText.innerText = 'Harvest active in Mission Control HUD!';
@@ -82,8 +97,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // 4. Stop Harvest
   btnStopHarvest.addEventListener('click', () => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) return;
       if (tabs[0] && tabs[0].id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'STOP_HARVEST' }, () => {
+          if (chrome.runtime.lastError) return;
           btnStartHarvest.style.display = 'flex';
           btnStopHarvest.style.display = 'none';
           statusText.innerText = 'Harvest stopped.';
@@ -92,19 +109,42 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // 5. Export CSV
-  btnExportCSV.addEventListener('click', () => {
+  // 5. Export Handlers
+  function sendTabMessage(msg) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) return;
       if (tabs[0] && tabs[0].id) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'EXPORT_CSV' });
+        chrome.tabs.sendMessage(tabs[0].id, msg, () => {
+          if (chrome.runtime.lastError) {}
+        });
       }
     });
-  });
+  }
+
+  if (btnExportCSV) {
+    btnExportCSV.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_CSV' }));
+  }
+  if (btnExportCompanyCSV) {
+    btnExportCompanyCSV.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_COMPANY_CSV' }));
+  }
+  if (btnExportJSON) {
+    btnExportJSON.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_JSON' }));
+  }
+  if (btnExportCompanyJSON) {
+    btnExportCompanyJSON.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_COMPANY_JSON' }));
+  }
+  if (btnExportPreflightPlan) {
+    btnExportPreflightPlan.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_PREFLIGHT_PLAN_CSV' }));
+  }
+  if (btnExportHarvestAudit) {
+    btnExportHarvestAudit.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_HARVEST_AUDIT_CSV' }));
+  }
 
   // 6. Clear Data
   btnClear.addEventListener('click', () => {
     if (confirm('Clear all stored leads from extension database?')) {
-      chrome.runtime.sendMessage({ type: 'CLEAR_DB' }, () => {
+      chrome.runtime.sendMessage({ type: 'CLEAR_DB' }, (resp) => {
+        if (chrome.runtime.lastError) return;
         updateStats();
         previewContainer.innerHTML = '<div class="empty-state">Database cleared. Ready for fresh harvest!</div>';
       });

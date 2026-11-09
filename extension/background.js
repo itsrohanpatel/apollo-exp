@@ -73,9 +73,9 @@ async function updateBadge() {
 // 5. Message Listener
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'APOLLO_SAVE_BATCH') {
-    saveLeads(msg.leads).then(count => {
-      sendResponse({ saved: count });
-    });
+    saveLeads(msg.leads)
+      .then(count => sendResponse({ saved: count }))
+      .catch(err => sendResponse({ saved: 0, error: err?.message || String(err) }));
     return true;
   }
 
@@ -97,9 +97,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'GET_BACKGROUND_STATS') {
-    getLeadCount().then(count => {
-      sendResponse({ totalInDB: count });
-    });
+    getLeadCount()
+      .then(count => sendResponse({ totalInDB: count }))
+      .catch(err => sendResponse({ totalInDB: 0, error: err?.message || String(err) }));
     return true;
   }
 
@@ -111,7 +111,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         updateBadge();
         sendResponse({ success: true });
       };
-    });
+      tx.onerror = () => sendResponse({ success: false, error: tx.error?.message || 'Transaction error' });
+    }).catch(err => sendResponse({ success: false, error: err?.message || String(err) }));
     return true;
   }
 });

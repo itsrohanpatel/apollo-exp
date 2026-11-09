@@ -15,6 +15,29 @@
     const originalOpen = XMLHttpRequest.prototype.open;
     const originalSend = XMLHttpRequest.prototype.send;
 
+    function isApolloSearchUrl(url = '') {
+      return url.includes('/api/v1/mixed_people/search') ||
+             url.includes('/api/v1/mixed_companies/search') ||
+             url.includes('/api/v1/organizations/search');
+    }
+
+    function processSearchResponse(url, data) {
+      if (!data || typeof data !== 'object') return;
+      const isCompany = url.includes('mixed_companies') || url.includes('organizations');
+      const rawList = Array.isArray(data.people)
+        ? data.people
+        : (Array.isArray(data.organizations) ? data.organizations : (Array.isArray(data.accounts) ? data.accounts : null));
+
+      if (rawList) {
+        data.people = isCompany ? rawList.map(item => ({ ...item, _entityType: 'companies' })) : rawList;
+        window.postMessage({
+          type: 'APOLLO_NATIVE_SEARCH_RESPONSE',
+          data: data,
+          timestamp: Date.now()
+        }, '*');
+      }
+    }
+
     XMLHttpRequest.prototype.open = function (method, url, ...rest) {
       this._url = typeof url === 'string' ? url : (url?.toString() || '');
       this._method = method;
@@ -22,7 +45,7 @@
     };
 
     XMLHttpRequest.prototype.send = function (body, ...rest) {
-      if (this._url && this._url.includes('/api/v1/mixed_people/search') && activeSortConfig && typeof body === 'string') {
+      if (this._url && isApolloSearchUrl(this._url) && activeSortConfig && typeof body === 'string') {
         try {
           const payload = JSON.parse(body);
           payload.sort_by_field = activeSortConfig.sort_by_field;
@@ -33,16 +56,10 @@
 
       this.addEventListener('load', function () {
         try {
-          if (this._url && this._url.includes('/api/v1/mixed_people/search')) {
+          if (this._url && isApolloSearchUrl(this._url)) {
             if (this.status === 200 && this.responseText) {
               const data = JSON.parse(this.responseText);
-              if (Array.isArray(data.people)) {
-                window.postMessage({
-                  type: 'APOLLO_NATIVE_SEARCH_RESPONSE',
-                  data: data,
-                  timestamp: Date.now()
-                }, '*');
-              }
+              processSearchResponse(this._url, data);
             }
           }
         } catch (e) {}
@@ -54,7 +71,7 @@
     const originalFetch = window.fetch;
     window.fetch = async function (resource, init, ...rest) {
       const url = typeof resource === 'string' ? resource : (resource?.url || '');
-      if (url.includes('/api/v1/mixed_people/search') && activeSortConfig && init && typeof init.body === 'string') {
+      if (isApolloSearchUrl(url) && activeSortConfig && init && typeof init.body === 'string') {
         try {
           const payload = JSON.parse(init.body);
           payload.sort_by_field = activeSortConfig.sort_by_field;
@@ -65,17 +82,11 @@
 
       const response = await originalFetch.apply(this, [resource, init, ...rest]);
       try {
-        if (url.includes('/api/v1/mixed_people/search')) {
+        if (isApolloSearchUrl(url)) {
           if (response.status === 200) {
             const clone = response.clone();
             clone.json().then(data => {
-              if (Array.isArray(data.people)) {
-                window.postMessage({
-                  type: 'APOLLO_NATIVE_SEARCH_RESPONSE',
-                  data: data,
-                  timestamp: Date.now()
-                }, '*');
-              }
+              processSearchResponse(url, data);
             }).catch(() => {});
           }
         }
@@ -195,8 +206,14 @@
   window.addEventListener('message', (event) => {
     if (event.source !== window || !event.data) return;
 
-    // A. Command: Navigate URL Hash
+    // A. Command: Navigate URL Hash (with Atomic Sort & Page 1 Reset Support)
     if (event.data.type === 'APOLLO_NAVIGATE_HASH') {
+      // 1. Synchronously arm sort configuration BEFORE touching hash or dispatching events
+      if (event.data.sort) {
+        activeSortConfig = event.data.sort;
+        console.log('[Apollo Extractor] Active sort parameter atomically armed:', activeSortConfig);
+      }
+
       const hash = event.data.hash;
       if (hash) {
         const oldUrl = window.location.href;
@@ -204,6 +221,24 @@
         const newUrl = window.location.href;
         window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: newUrl }));
         window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+      }
+
+      // 2. Physical DOM Page 1 Reset: If entering Page 1 and UI pagination is sitting on page > 1, click button "1"
+      if (event.data.resetPage1 || (hash && hash.includes('page=1'))) {
+        try {
+          const links = Array.from(document.querySelectorAll('.zp_rJq0p, .zp_EVN8k, a.zp_x2Vvy, button.zp_x2Vvy, a[role="button"], button[role="button"], [aria-label*="Page"]'));
+          const p1 = links.find(a => (a.innerText || '').trim() === '1');
+          if (p1 && !p1.classList.contains('active') && p1.getAttribute('aria-current') !== 'page' && p1.getAttribute('aria-selected') !== 'true') {
+            console.log('[Apollo Extractor] Triggering physical DOM click on Page 1 to clear stranded pagination...');
+            p1.click();
+          } else {
+            const pageSelect = document.querySelector('select[name="items"]');
+            if (pageSelect && pageSelect.value !== '1') {
+              pageSelect.value = '1';
+              pageSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }
+        } catch (e) {}
       }
     }
 
@@ -265,37 +300,52 @@
         return v ? v[2] : null;
       };
       const csrf = getCookie('X-CSRF-TOKEN') || '';
+      const isCompanySearch = (window.location.hash || '').includes('companies');
+      const metadataUrl = isCompanySearch ? '/api/v1/mixed_companies/search' : '/api/v1/mixed_people/search_metadata_mode';
+      const standardUrl = isCompanySearch ? '/api/v1/mixed_companies/search' : '/api/v1/mixed_people/search';
 
-      fetch('/api/v1/mixed_people/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrf
-        },
-        body: JSON.stringify(payload)
-      })
-      .then(r => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(data => {
-        const total = data.total_entries || data.pagination?.total_entries || 0;
-        window.postMessage({
-          type: 'APOLLO_PROBE_DENSITY_RESULT',
-          requestId,
-          total,
-          success: true
-        }, '*');
-      })
-      .catch(err => {
-        window.postMessage({
-          type: 'APOLLO_PROBE_DENSITY_RESULT',
-          requestId,
-          total: null,
-          error: err.message,
-          success: false
-        }, '*');
-      });
+      const executeProbe = (url) => {
+        return fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrf
+          },
+          body: JSON.stringify(payload)
+        }).then(r => {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        });
+      };
+
+      executeProbe(metadataUrl)
+        .catch(err => {
+          if (metadataUrl !== standardUrl) {
+            console.warn('[Apollo Extractor] Metadata probe failed, falling back to standard search:', err.message);
+            return executeProbe(standardUrl);
+          }
+          throw err;
+        })
+        .then(data => {
+          const total = (typeof data.pipeline_total === 'number')
+            ? data.pipeline_total
+            : (data.total_entries || data.pagination?.total_entries || 0);
+          window.postMessage({
+            type: 'APOLLO_PROBE_DENSITY_RESULT',
+            requestId,
+            total,
+            success: true
+          }, '*');
+        })
+        .catch(err => {
+          window.postMessage({
+            type: 'APOLLO_PROBE_DENSITY_RESULT',
+            requestId,
+            total: null,
+            error: err.message,
+            success: false
+          }, '*');
+        });
     }
   });
 

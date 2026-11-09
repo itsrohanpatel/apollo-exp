@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Apollo Universal Lead Harvester",
   "version": "2.3.0",
-  "description": "Authentic UI-driven Apollo Lead Extractor with Dual-Sort (A-Z + Z-A) capacity boost, in-page HUD, and instant 29-column CSV export",
+  "description": "Authentic UI-driven Apollo Lead Extractor with Dual-Sort (A-Z + Z-A) capacity boost, in-page HUD, and instant 28-column clean CSV export",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

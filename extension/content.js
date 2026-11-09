@@ -29,8 +29,14 @@
     buildChunkedUnionCSV,
     buildChunkedCleanOutreachCSV,
     normalizePersonComprehensive,
+    normalizeCompanyComprehensive,
     PREFERRED_PERSON_COLUMNS,
-    CLEAN_OUTREACH_COLUMNS_28
+    PREFERRED_COMPANY_COLUMNS,
+    CLEAN_OUTREACH_COLUMNS_28,
+    HarvestTelemetryEstimator,
+    buildPreflightPlanCSV,
+    buildHarvestAuditCSV,
+    shouldEarlyExitHarvest
   } = slicerCore;
   const { ApolloHUD } = hudModule;
 
@@ -40,6 +46,9 @@
   let isHarvesting = false;
   let isPaused = false;
   let harvestAbort = false;
+  let lastPreflightPlanCSV = null;
+  let lastHarvestAuditCSV = null;
+  let harvestPageAuditRecords = [];
   const dedupeStore = new DeduplicationStore();
 
   let activeBatchResolver = null;
@@ -123,8 +132,8 @@
     });
   }
 
-  function probeDensity(filters) {
-    return new Promise((resolve) => {
+  async function probeDensity(filters, attempt = 1) {
+    const result = await new Promise((resolve) => {
       const requestId = 'probe_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
       const currentHash = window.location.hash || '';
       const basePayload = parseApolloUrlHash(currentHash);
@@ -132,7 +141,10 @@
         ...basePayload,
         ...filters,
         page: 1,
-        per_page: 25
+        per_page: 30,
+        display_mode: 'metadata_mode',
+        open_factor_names: [],
+        num_fetch_result: 25
       };
       if (basePayload.organization_linkedin_urls) {
         fullPayload.organization_linkedin_urls = basePayload.organization_linkedin_urls;
@@ -151,7 +163,7 @@
           activeProbeResolvers.delete(requestId);
           resolve(null);
         }
-      }, 5000);
+      }, 12000);
 
       activeProbeResolvers.set(requestId, (total) => {
         clearTimeout(timer);
@@ -164,6 +176,14 @@
         payload: fullPayload
       }, '*');
     });
+
+    if (result === null && attempt < 2) {
+      console.warn('[Apollo Extractor] Density probe timed out or failed. Retrying once with 1500ms jitter...');
+      await new Promise(r => setTimeout(r, 1500 + Math.floor(Math.random() * 500)));
+      return probeDensity(filters, attempt + 1);
+    }
+
+    return result;
   }
 
   // 4. Initialize HUD
@@ -190,6 +210,7 @@
     isHarvesting = true;
     harvestAbort = false;
     isPaused = false;
+    harvestPageAuditRecords = [];
 
     ensureHUD();
     hud.setHarvestState('running');
@@ -229,12 +250,22 @@
     } catch (e) {}
 
     let cabinets = [];
+    const preflightAuditLog = [];
     try {
       hud.setStatus('🔍 Probing search tree for 100% lead coverage...');
       cabinets = await resolveAdaptiveExecutionTree(probeDensity, baseFilters, {
         maxLeadsPerCabinet: 125,
         initialTotal,
         maxEmployees,
+        decomposeEnterprise: true,
+        auditLog: preflightAuditLog,
+        sleepFn: sleepWithCountdown,
+        probePacing: {
+          minDelay: 800,
+          maxDelay: 1600,
+          zeroMinDelay: 500,
+          zeroMaxDelay: 1000
+        },
         onProbeProgress: (p) => {
           if (p.type === 'BRACKET_PROBE') {
             hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads found...`);
@@ -242,6 +273,8 @@
             hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads...`);
           } else if (p.type === 'EMAIL_PROBE') {
             hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads...`);
+          } else if (p.type === 'ZERO_RESULT_DWELL') {
+            hud.setStatus(`⚡ [${p.label}] has 0 leads. Stealth dwell...`);
           }
         }
       });
@@ -274,8 +307,78 @@
     }
 
     let totalSlices = cabinets.length;
-    hud.setStatus(`⚡ Resolved ${totalSlices} micro-cabinets. Starting harvest...`);
-    hud.updateProgress({ totalSlices, sliceIdx: 1, totalLeads: dedupeStore.size() });
+
+    // --- AUTO-EXPORT PREFLIGHT AUDIT & CABINET DESIGN CSV ---
+    try {
+      lastPreflightPlanCSV = buildPreflightPlanCSV(cabinets, preflightAuditLog, {
+        currentHash,
+        baseFilters,
+        initialTotal
+      });
+
+      chrome.runtime.sendMessage({
+        type: 'APOLLO_DOWNLOAD_CSV',
+        csv: lastPreflightPlanCSV,
+        filename: `apollo_preflight_plan_${totalSlices}_cabinets_${Date.now()}.csv`
+      });
+
+      if (hud && typeof hud.setPreflightPlanReady === 'function') {
+        hud.setPreflightPlanReady(() => exportPreflightPlanCSV());
+      }
+    } catch (csvErr) {
+      console.warn('[Apollo Extractor] Auto-export preflight plan error:', csvErr);
+    }
+
+    const telemetry = new HarvestTelemetryEstimator({
+      defaultPacingMs: 2500,
+      cooldownEveryN: 10,
+      cooldownDurationMs: 45000,
+      enableCooldown: true
+    });
+
+    const getEstimatedRemainingPages = (currIdx, currPage, isPass2 = false) => {
+      let rem = isPass2 ? Math.max(0, 5 - currPage) : (Math.max(0, 5 - currPage) + 4);
+      for (let j = currIdx + 1; j < cabinets.length; j++) {
+        const c = cabinets[j];
+        if (typeof c.total === 'number' && c.total > 0) {
+          rem += Math.min(10, Math.ceil(c.total / 25));
+        } else {
+          rem += (c.mode === 'Bidirectional' ? 8 : 5);
+        }
+      }
+      return rem;
+    };
+
+    const initialRemPages = getEstimatedRemainingPages(0, 0, false);
+    let currentEtaSeconds = telemetry.estimateRemainingSeconds(initialRemPages, totalSlices);
+    let currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
+    let currentLatencyMs = 400;
+    let currentIsSpike = false;
+
+    hud.updateProgress({
+      totalSlices,
+      sliceIdx: 1,
+      totalLeads: dedupeStore.size(),
+      eta: currentEta,
+      etaSeconds: currentEtaSeconds,
+      latencyMs: currentLatencyMs,
+      isLatencySpike: currentIsSpike
+    });
+
+    // --- INTERACTIVE REVIEW GATE ---
+    // Pause execution, present plan metrics, and wait for operator confirmation to start live harvest
+    if (hud && typeof hud.setPreflightReviewReady === 'function') {
+      await new Promise((resolveStart) => {
+        hud.setPreflightReviewReady({
+          totalSlices,
+          currentEtaSeconds,
+          onStart: () => resolveStart(),
+          onExportCSV: () => exportPreflightPlanCSV()
+        });
+      });
+      hud.setHarvestState('running');
+      hud.setStatus(`⚡ Starting live harvest across ${totalSlices} cabinets...`);
+    }
 
     for (let i = 0; i < cabinets.length; i++) {
       if (harvestAbort || dedupeStore.size() >= targetLeadLimit) break;
@@ -297,10 +400,20 @@
         sliceLabel,
         passLabel: 'Pass 1 (A-Z)',
         sliceHarvested,
-        totalLeads: dedupeStore.size()
+        totalLeads: dedupeStore.size(),
+        eta: currentEta,
+        etaSeconds: currentEtaSeconds,
+        latencyMs: currentLatencyMs,
+        isLatencySpike: currentIsSpike
       });
 
       // --- PASS 1: Company Ascending (A -> Z) ---
+      // Pre-Cabinet Sort Guard: Force sort_ascending: true before Pass 1 to prevent reverse-bleed from prior cabinets
+      window.postMessage({
+        type: 'APOLLO_SET_SORT',
+        sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true }
+      }, '*');
+
       let pass1Done = false;
       for (let page = 1; page <= 5; page++) {
         if (harvestAbort || dedupeStore.size() >= targetLeadLimit) break;
@@ -314,22 +427,39 @@
           passLabel: `Pass 1: A-Z (p${page})`,
           sliceHarvested,
           sliceTotal,
-          totalLeads: dedupeStore.size()
+          totalLeads: dedupeStore.size(),
+          eta: currentEta,
+          etaSeconds: currentEtaSeconds,
+          latencyMs: currentLatencyMs,
+          isLatencySpike: currentIsSpike
         });
         const waitPromise = waitForBatch();
 
         if (page === 1) {
           const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
-          window.postMessage({ type: 'APOLLO_NAVIGATE_HASH', hash: newHash }, '*');
           window.postMessage({
-            type: 'APOLLO_SET_SORT',
-            sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true }
+            type: 'APOLLO_NAVIGATE_HASH',
+            hash: newHash,
+            sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true },
+            resetPage1: true
           }, '*');
+          window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
         } else {
           window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
         }
 
+        const reqStart1 = performance.now();
         let data = await waitPromise;
+        const reqLatencyMs1 = Math.round(performance.now() - reqStart1);
+        telemetry.recordRequest(reqLatencyMs1);
+
+        const remPages1 = getEstimatedRemainingPages(i, page, false);
+        currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages1, cabinets.length - i);
+        currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
+        const spikeInfo1 = telemetry.getLatencySpikeStatus();
+        currentLatencyMs = spikeInfo1.avgLatencyMs;
+        currentIsSpike = spikeInfo1.isSpike;
+
         if (!data) {
           const domLeads = await extractDOMFallback();
           if (domLeads && domLeads.length > 0) {
@@ -348,6 +478,28 @@
           // 1. Short-circuit empty cabinet immediately
           if (sliceTotal === 0) {
             hud.setStatus(`⚡ Cabinet [${sliceLabel}] has 0 leads. Advancing to next...`);
+            harvestPageAuditRecords.push({
+              event: harvestPageAuditRecords.length + 1,
+              sliceIdx: i + 1,
+              totalSlices,
+              sliceLabel,
+              bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
+              seniority: cabinet.seniority || 'All',
+              emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
+              passLabel: 'Pass 1 (A-Z)',
+              sortDirection: 'Company Ascending (A-Z)',
+              page: 1,
+              sliceTotal: 0,
+              rawLeadsCount: 0,
+              freshLeadsCount: 0,
+              duplicateLeadsCount: 0,
+              sliceCumulative: 0,
+              globalCumulative: dedupeStore.size(),
+              latencyMs: reqLatencyMs1,
+              pacingMs: 0,
+              status: 'EMPTY_CABINET_SHORT_CIRCUIT',
+              timestamp: new Date().toISOString()
+            });
             wasEmpty = true;
             pass1Done = true;
             break;
@@ -362,7 +514,37 @@
               cabinets.splice(i, 1, ...subCabinets);
               totalSlices = cabinets.length;
               hud.setStatus(`⚡ Subdivided [${sliceLabel}] (${sliceTotal} leads) into ${subCabinets.length} sub-cabinets...`);
-              hud.updateProgress({ totalSlices, sliceIdx: i + 1, totalLeads: dedupeStore.size() });
+              harvestPageAuditRecords.push({
+                event: harvestPageAuditRecords.length + 1,
+                sliceIdx: i + 1,
+                totalSlices,
+                sliceLabel,
+                bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
+                seniority: cabinet.seniority || 'All',
+                emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
+                passLabel: 'Pass 1 (A-Z)',
+                sortDirection: 'Company Ascending (A-Z)',
+                page: 1,
+                sliceTotal,
+                rawLeadsCount: 0,
+                freshLeadsCount: 0,
+                duplicateLeadsCount: 0,
+                sliceCumulative: 0,
+                globalCumulative: dedupeStore.size(),
+                latencyMs: reqLatencyMs1,
+                pacingMs: 0,
+                status: `SUBDIVIDED_RUNTIME_INTO_${subCabinets.length}_SUBCABINETS`,
+                timestamp: new Date().toISOString()
+              });
+              hud.updateProgress({
+                totalSlices,
+                sliceIdx: i + 1,
+                totalLeads: dedupeStore.size(),
+                eta: currentEta,
+                etaSeconds: currentEtaSeconds,
+                latencyMs: currentLatencyMs,
+                isLatencySpike: currentIsSpike
+              });
               wasSubdivided = true;
               i--;
               pass1Done = true;
@@ -390,6 +572,39 @@
           }
         }
 
+        const exitDecision1 = shouldEarlyExitHarvest({
+          isPass2: false,
+          page,
+          sliceHarvested,
+          sliceTotal,
+          addedInPage,
+          rawPeopleCount: rawPeople.length
+        });
+
+        const delay = generatePacingDelay(2000, 3200);
+        harvestPageAuditRecords.push({
+          event: harvestPageAuditRecords.length + 1,
+          sliceIdx: i + 1,
+          totalSlices,
+          sliceLabel,
+          bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
+          seniority: cabinet.seniority || 'All',
+          emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
+          passLabel: `Pass 1: A-Z (p${page})`,
+          sortDirection: 'Company Ascending (A-Z)',
+          page,
+          sliceTotal: sliceTotal !== null ? sliceTotal : 'Unknown',
+          rawLeadsCount: rawPeople.length,
+          freshLeadsCount: addedInPage,
+          duplicateLeadsCount: Math.max(0, people.length - addedInPage),
+          sliceCumulative: sliceHarvested,
+          globalCumulative: dedupeStore.size(),
+          latencyMs: reqLatencyMs1,
+          pacingMs: exitDecision1.shouldExit ? 0 : delay,
+          status: exitDecision1.status,
+          timestamp: new Date().toISOString()
+        });
+
         hud.updateProgress({
           sliceIdx: i + 1,
           totalSlices,
@@ -397,7 +612,11 @@
           passLabel: `Pass 1: A-Z (p${page})`,
           sliceHarvested,
           sliceTotal,
-          totalLeads: dedupeStore.size()
+          totalLeads: dedupeStore.size(),
+          eta: currentEta,
+          etaSeconds: currentEtaSeconds,
+          latencyMs: currentLatencyMs,
+          isLatencySpike: currentIsSpike
         });
 
         // Store incrementally in background
@@ -408,13 +627,12 @@
           });
         }
 
-        if (rawPeople.length < 25) {
+        if (exitDecision1.shouldExit) {
           pass1Done = true;
           break;
         }
 
         // Pacing delay
-        const delay = generatePacingDelay(2000, 3200);
         await sleepWithCountdown(delay);
       }
 
@@ -434,7 +652,11 @@
           passLabel: 'Pass 2 (Z-A)',
           sliceHarvested,
           sliceTotal,
-          totalLeads: dedupeStore.size()
+          totalLeads: dedupeStore.size(),
+          eta: currentEta,
+          etaSeconds: currentEtaSeconds,
+          latencyMs: currentLatencyMs,
+          isLatencySpike: currentIsSpike
         });
 
         for (let page = 1; page <= 5; page++) {
@@ -449,22 +671,39 @@
             passLabel: `Pass 2: Z-A (p${page})`,
             sliceHarvested,
             sliceTotal,
-            totalLeads: dedupeStore.size()
+            totalLeads: dedupeStore.size(),
+            eta: currentEta,
+            etaSeconds: currentEtaSeconds,
+            latencyMs: currentLatencyMs,
+            isLatencySpike: currentIsSpike
           });
           const waitPromise = waitForBatch();
 
           if (page === 1) {
             const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
-            window.postMessage({ type: 'APOLLO_NAVIGATE_HASH', hash: newHash }, '*');
             window.postMessage({
-              type: 'APOLLO_SET_SORT',
-              sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false }
+              type: 'APOLLO_NAVIGATE_HASH',
+              hash: newHash,
+              sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false },
+              resetPage1: true
             }, '*');
+            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
           } else {
             window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
           }
 
+          const reqStart2 = performance.now();
           let data = await waitPromise;
+          const reqLatencyMs2 = Math.round(performance.now() - reqStart2);
+          telemetry.recordRequest(reqLatencyMs2);
+
+          const remPages2 = getEstimatedRemainingPages(i, page, true);
+          currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages2, cabinets.length - i);
+          currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
+          const spikeInfo2 = telemetry.getLatencySpikeStatus();
+          currentLatencyMs = spikeInfo2.avgLatencyMs;
+          currentIsSpike = spikeInfo2.isSpike;
+
           if (!data) {
             const domLeads = await extractDOMFallback();
             if (domLeads && domLeads.length > 0) {
@@ -493,6 +732,39 @@
             }
           }
 
+          const exitDecision2 = shouldEarlyExitHarvest({
+            isPass2: true,
+            page,
+            sliceHarvested,
+            sliceTotal,
+            addedInPage,
+            rawPeopleCount: rawPeople.length
+          });
+
+          const delay = generatePacingDelay(2000, 3200);
+          harvestPageAuditRecords.push({
+            event: harvestPageAuditRecords.length + 1,
+            sliceIdx: i + 1,
+            totalSlices,
+            sliceLabel,
+            bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
+            seniority: cabinet.seniority || 'All',
+            emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
+            passLabel: `Pass 2: Z-A (p${page})`,
+            sortDirection: 'Company Descending (Z-A)',
+            page,
+            sliceTotal: sliceTotal !== null ? sliceTotal : 'Unknown',
+            rawLeadsCount: rawPeople.length,
+            freshLeadsCount: addedInPage,
+            duplicateLeadsCount: Math.max(0, people.length - addedInPage),
+            sliceCumulative: sliceHarvested,
+            globalCumulative: dedupeStore.size(),
+            latencyMs: reqLatencyMs2,
+            pacingMs: exitDecision2.shouldExit ? 0 : delay,
+            status: exitDecision2.status,
+            timestamp: new Date().toISOString()
+          });
+
           hud.updateProgress({
             sliceIdx: i + 1,
             totalSlices,
@@ -500,7 +772,11 @@
             passLabel: `Pass 2: Z-A (p${page})`,
             sliceHarvested,
             sliceTotal,
-            totalLeads: dedupeStore.size()
+            totalLeads: dedupeStore.size(),
+            eta: currentEta,
+            etaSeconds: currentEtaSeconds,
+            latencyMs: currentLatencyMs,
+            isLatencySpike: currentIsSpike
           });
 
           if (people.length > 0) {
@@ -510,9 +786,8 @@
             });
           }
 
-          if (rawPeople.length < 25) break;
+          if (exitDecision2.shouldExit) break;
 
-          const delay = generatePacingDelay(2000, 3200);
           await sleepWithCountdown(delay);
         }
       }
@@ -523,10 +798,11 @@
     isHarvesting = false;
     hud.setHarvestState('completed');
     hud.setStatus(`✅ Harvest Finished! Captured ${dedupeStore.size()} unique leads.`);
-    hud.updateProgress({ passLabel: 'Completed', sliceIdx: totalSlices, totalSlices });
+    hud.updateProgress({ passLabel: 'Completed', sliceIdx: totalSlices, totalSlices, eta: 'Complete', etaSeconds: 0 });
 
-    // Auto-trigger export
+    // Auto-trigger export of both leads and page audit CSV
     exportCollectedLeads();
+    exportHarvestAuditCSV();
   }
 
   async function sleepWithCountdown(ms) {
@@ -567,10 +843,58 @@
         ? buildChunkedCleanOutreachCSV(normalizedLeads)
         : buildChunkedUnionCSV(normalizedLeads, PREFERRED_PERSON_COLUMNS);
     }
+    const prefix = isCompany ? 'apollo_companies' : 'apollo_leads';
     chrome.runtime.sendMessage({
       type: 'APOLLO_DOWNLOAD_CSV',
       csv: csvContent,
-      filename: `apollo_leads_${allLeads.length}_${Date.now()}.csv`
+      filename: `${prefix}_${allLeads.length}_${Date.now()}.csv`
+    });
+  }
+
+  function exportCollectedJSON() {
+    const allLeads = dedupeStore.getAll();
+    if (allLeads.length === 0) {
+      alert('No leads collected yet to export.');
+      return;
+    }
+    const isCompany = allLeads[0]?._entityType === 'companies';
+    const prefix = isCompany ? 'apollo_companies' : 'apollo_leads';
+    const jsonStr = JSON.stringify(allLeads, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${prefix}_${allLeads.length}_${Date.now()}.json`;
+    (document.body || document.documentElement).appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  function exportPreflightPlanCSV() {
+    if (!lastPreflightPlanCSV) {
+      alert('No preflight plan CSV generated yet. Start an AI harvest to probe density and generate the plan!');
+      return;
+    }
+    chrome.runtime.sendMessage({
+      type: 'APOLLO_DOWNLOAD_CSV',
+      csv: lastPreflightPlanCSV,
+      filename: `apollo_preflight_plan_${Date.now()}.csv`
+    });
+  }
+
+  function exportHarvestAuditCSV() {
+    if (harvestPageAuditRecords.length === 0 && !lastHarvestAuditCSV) {
+      alert('No harvest page events recorded yet.');
+      return;
+    }
+    lastHarvestAuditCSV = buildHarvestAuditCSV(harvestPageAuditRecords, {
+      totalHarvested: dedupeStore.size()
+    });
+    chrome.runtime.sendMessage({
+      type: 'APOLLO_DOWNLOAD_CSV',
+      csv: lastHarvestAuditCSV,
+      filename: `apollo_harvest_audit_${dedupeStore.size()}_leads_${Date.now()}.csv`
     });
   }
 
@@ -582,14 +906,24 @@
     } else if (msg.type === 'STOP_HARVEST') {
       harvestAbort = true;
       sendResponse({ status: 'STOPPING' });
-    } else if (msg.type === 'EXPORT_CSV') {
+    } else if (msg.type === 'EXPORT_CSV' || msg.type === 'EXPORT_COMPANY_CSV') {
       exportCollectedLeads();
       sendResponse({ status: 'EXPORTING' });
+    } else if (msg.type === 'EXPORT_JSON' || msg.type === 'EXPORT_COMPANY_JSON') {
+      exportCollectedJSON();
+      sendResponse({ status: 'EXPORTING_JSON' });
+    } else if (msg.type === 'EXPORT_PREFLIGHT_PLAN_CSV') {
+      exportPreflightPlanCSV();
+      sendResponse({ status: 'EXPORTING_PLAN' });
+    } else if (msg.type === 'EXPORT_HARVEST_AUDIT_CSV') {
+      exportHarvestAuditCSV();
+      sendResponse({ status: 'EXPORTING_AUDIT' });
     } else if (msg.type === 'GET_STATUS') {
       sendResponse({
         isHarvesting,
         isPaused,
-        totalHarvested: dedupeStore.size()
+        totalHarvested: dedupeStore.size(),
+        totalCompanies: dedupeStore.orgIds?.size || 0
       });
     }
     return true;
