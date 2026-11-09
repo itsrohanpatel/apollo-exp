@@ -55,67 +55,87 @@ export const APOLLO_MASTER_SUBDEPARTMENTS = {
     { key: 'account_executives', label: 'Direct Sales / AE', queryKey: 'account_executives' },
     { key: 'customer_success', label: 'Customer Success & Retention', queryKey: 'customer_success' },
     { key: 'sales_operations', label: 'Sales Operations & Enablement', queryKey: 'sales_operations' },
-    { key: 'channel_partnerships', label: 'Partnerships & Alliances', queryKey: 'channel_partnerships' }
+    { key: 'channel_partnerships', label: 'Partnerships & Alliances', queryKey: 'channel_partnerships' },
+    { key: 'field_sales', label: 'Field & Enterprise Sales', queryKey: 'field_sales' },
+    { key: 'inside_sales', label: 'Inside Sales', queryKey: 'inside_sales' }
   ],
   master_marketing: [
     { key: 'demand_generation', label: 'Demand Gen & Performance', queryKey: 'demand_generation' },
-    { key: 'content_seo', label: 'Content & Inbound', queryKey: 'content_marketing' },
+    { key: 'content_marketing', label: 'Content & Inbound', queryKey: 'content_marketing' },
     { key: 'product_marketing', label: 'Product Marketing', queryKey: 'product_marketing' },
-    { key: 'brand_pr', label: 'Brand & Communications', queryKey: 'brand_marketing' },
-    { key: 'marketing_ops', label: 'Marketing Operations', queryKey: 'marketing_operations' }
+    { key: 'brand_marketing', label: 'Brand & Communications', queryKey: 'brand_marketing' },
+    { key: 'marketing_operations', label: 'Marketing Operations', queryKey: 'marketing_operations' },
+    { key: 'digital_marketing', label: 'Digital Marketing & Growth', queryKey: 'digital_marketing' },
+    { key: 'event_marketing', label: 'Event & Field Marketing', queryKey: 'event_marketing' }
   ],
   master_engineering_technical: [
     { key: 'software_engineering', label: 'Software Engineering', queryKey: 'software_engineering' },
     { key: 'devops_sre', label: 'DevOps & Infrastructure', queryKey: 'devops_sre' },
     { key: 'data_engineering', label: 'Data Engineering & Analytics', queryKey: 'data_engineering' },
-    { key: 'qa_testing', label: 'QA & Test Engineering', queryKey: 'qa_testing' }
+    { key: 'qa_testing', label: 'QA & Test Engineering', queryKey: 'qa_testing' },
+    { key: 'security_engineering', label: 'Security & InfoSec Engineering', queryKey: 'security_engineering' },
+    { key: 'systems_architecture', label: 'Systems & Architecture', queryKey: 'systems_architecture' }
   ],
   master_finance: [
     { key: 'accounting', label: 'Accounting & Bookkeeping', queryKey: 'accounting' },
     { key: 'fpa', label: 'Financial Planning & Analysis (FP&A)', queryKey: 'fpa' },
     { key: 'tax_treasury', label: 'Tax & Treasury', queryKey: 'tax_treasury' },
-    { key: 'audit_risk', label: 'Audit, Risk & Compliance', queryKey: 'audit_risk' }
+    { key: 'audit_risk', label: 'Audit, Risk & Compliance', queryKey: 'audit_risk' },
+    { key: 'corporate_finance', label: 'Corporate Finance & M&A', queryKey: 'corporate_finance' }
   ],
   master_operations: [
-    { key: 'supply_chain_logistics', label: 'Supply Chain & Logistics', queryKey: 'supply_chain' },
+    { key: 'supply_chain', label: 'Supply Chain & Logistics', queryKey: 'supply_chain' },
     { key: 'business_operations', label: 'Business Operations (BizOps)', queryKey: 'business_operations' },
     { key: 'procurement', label: 'Procurement & Vendor Management', queryKey: 'procurement' },
-    { key: 'facilities', label: 'Facilities & Workplace', queryKey: 'facilities' }
+    { key: 'facilities', label: 'Facilities & Workplace', queryKey: 'facilities' },
+    { key: 'project_management', label: 'Project & Program Management', queryKey: 'project_management' }
   ],
   master_information_technology: [
     { key: 'it_support', label: 'IT Support & Helpdesk', queryKey: 'it_support' },
     { key: 'cybersecurity', label: 'Cybersecurity & InfoSec', queryKey: 'cybersecurity' },
     { key: 'systems_network', label: 'Systems & Network Admin', queryKey: 'systems_network' },
-    { key: 'cloud_infra', label: 'Cloud Architecture & Enterprise Apps', queryKey: 'cloud_infra' }
+    { key: 'cloud_infra', label: 'Cloud Architecture & Enterprise Apps', queryKey: 'cloud_infra' },
+    { key: 'database_administration', label: 'Database Administration', queryKey: 'database_administration' }
   ],
   c_suite: [
-    { key: 'ceo_general_mgmt', label: 'CEO / General Management', queryKey: 'general_management' },
-    { key: 'board_advisors', label: 'Board Members & Advisors', queryKey: 'board_advisors' }
+    { key: 'general_management', label: 'CEO / General Management', queryKey: 'general_management' },
+    { key: 'board_advisors', label: 'Board Members & Advisors', queryKey: 'board_advisors' },
+    { key: 'executive_leadership', label: 'Executive Leadership (CxO)', queryKey: 'executive_leadership' }
   ],
   master_legal: [
-    { key: 'corporate_counsel', label: 'Corporate & Commercial Counsel', queryKey: 'corporate_legal' },
-    { key: 'compliance_regulatory', label: 'Compliance & Regulatory', queryKey: 'regulatory_compliance' },
-    { key: 'ip_patent', label: 'IP & Patent Law', queryKey: 'intellectual_property' }
+    { key: 'corporate_legal', label: 'Corporate & Commercial Counsel', queryKey: 'corporate_legal' },
+    { key: 'regulatory_compliance', label: 'Compliance & Regulatory', queryKey: 'regulatory_compliance' },
+    { key: 'intellectual_property', label: 'IP & Patent Law', queryKey: 'intellectual_property' },
+    { key: 'contracts', label: 'Contracts & Legal Operations', queryKey: 'contracts' }
   ],
   product_management: [
-    { key: 'technical_pm', label: 'Technical Product Management', queryKey: 'technical_product' },
-    { key: 'growth_pm', label: 'Growth Product Management', queryKey: 'growth_product' }
+    { key: 'technical_product', label: 'Technical Product Management', queryKey: 'technical_product' },
+    { key: 'growth_product', label: 'Growth Product Management', queryKey: 'growth_product' },
+    { key: 'product_strategy', label: 'Product Strategy & Roadmapping', queryKey: 'product_strategy' },
+    { key: 'product_operations', label: 'Product Operations', queryKey: 'product_operations' }
   ],
   design: [
-    { key: 'ui_ux_product_design', label: 'UI/UX & Product Design', queryKey: 'product_design' },
-    { key: 'graphic_brand_design', label: 'Graphic, Brand & Media Design', queryKey: 'graphic_design' }
+    { key: 'product_design', label: 'UI/UX & Product Design', queryKey: 'product_design' },
+    { key: 'graphic_design', label: 'Graphic, Brand & Media Design', queryKey: 'graphic_design' },
+    { key: 'creative_direction', label: 'Creative Direction', queryKey: 'creative_direction' },
+    { key: 'industrial_design', label: 'Industrial & Hardware Design', queryKey: 'industrial_design' }
   ],
   consulting: [
     { key: 'management_consulting', label: 'Management & Strategy Consulting', queryKey: 'management_consulting' },
-    { key: 'technical_consulting', label: 'Technical & Implementation Consulting', queryKey: 'technical_consulting' }
+    { key: 'technical_consulting', label: 'Technical & Implementation Consulting', queryKey: 'technical_consulting' },
+    { key: 'business_consulting', label: 'Business Transformation Consulting', queryKey: 'business_consulting' }
   ],
   medical_health: [
-    { key: 'clinical_practice', label: 'Physicians & Clinical Practice', queryKey: 'clinical' },
-    { key: 'healthcare_operations', label: 'Healthcare & Hospital Operations', queryKey: 'healthcare_admin' }
+    { key: 'clinical', label: 'Physicians & Clinical Practice', queryKey: 'clinical' },
+    { key: 'healthcare_admin', label: 'Healthcare & Hospital Operations', queryKey: 'healthcare_admin' },
+    { key: 'medical_research', label: 'Medical Research & Life Sciences', queryKey: 'medical_research' },
+    { key: 'pharmacy_allied', label: 'Pharmacy & Allied Health', queryKey: 'pharmacy_allied' }
   ],
   education: [
-    { key: 'faculty_teaching', label: 'Faculty & Instruction', queryKey: 'faculty' },
-    { key: 'education_admin', label: 'Academic Administration', queryKey: 'education_admin' }
+    { key: 'faculty', label: 'Faculty & Instruction', queryKey: 'faculty' },
+    { key: 'education_admin', label: 'Academic Administration', queryKey: 'education_admin' },
+    { key: 'academic_research', label: 'Academic Research & Grants', queryKey: 'academic_research' },
+    { key: 'student_services', label: 'Student Affairs & Support', queryKey: 'student_services' }
   ]
 };
 
