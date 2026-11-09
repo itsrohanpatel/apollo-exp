@@ -3405,15 +3405,17 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       await sleepFn(delayMs);
     }
 
-    if (typeof count === 'number' && count <= maxLimit) {
+    // Single-integer headcounts (min === max) have 250-lead capacity via Bidirectional sweep
+    const singleHeadcountThreshold = (item.min === item.max) ? 250 : maxLimit;
+    if (typeof count === 'number' && count <= singleHeadcountThreshold) {
       const mode = count <= 125 ? 'Top-Down Only' : 'Bidirectional';
-      const pagesNeeded = Math.ceil(count / 25);
+      const pagesNeeded = Math.min(10, Math.ceil(count / 25));
       logAudit({
         type: 'BRACKET_PROBE',
         label: item.label,
         bracket: item.label,
         leadsCount: count,
-        decision: `Within safe limit (${count} <= ${maxLimit} leads). Approved as cabinet [${item.label}].`,
+        decision: `Within safe limit (${count} <= ${singleHeadcountThreshold} leads). Approved as cabinet [${item.label}].`,
         mode,
         pagesNeeded
       });
@@ -3520,7 +3522,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       label: item.label,
       bracket: item.label,
       leadsCount: count,
-      decision: `Single headcount density ceiling exceeded (${count} > ${maxLimit} leads). Pivoting to ${seniorities.length} Apollo seniorities.`
+      decision: `Single headcount density ceiling exceeded (${count} > ${singleHeadcountThreshold} leads). Pivoting to ${seniorities.length} Apollo seniorities.`
     });
 
     for (const sen of seniorities) {
@@ -3552,16 +3554,17 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         await sleepFn(delayMs);
       }
 
-      if (senCount <= maxLimit) {
+      // Seniority slices have 250-lead capacity via Bidirectional sweep
+      if (typeof senCount === 'number' && senCount <= 250) {
         const mode = senCount <= 125 ? 'Top-Down Only' : 'Bidirectional';
-        const pagesNeeded = Math.ceil(senCount / 25);
+        const pagesNeeded = Math.min(10, Math.ceil(senCount / 25));
         logAudit({
           type: 'SENIORITY_PROBE',
           label: `${item.label} ${sen}`,
           bracket: item.label,
           seniority: sen,
           leadsCount: senCount,
-          decision: `Within safe limit (${senCount} <= ${maxLimit} leads). Approved as cabinet [${item.label} ${sen}].`,
+          decision: `Within safe limit (${senCount} <= 250 leads). Approved as cabinet [${item.label} ${sen}].`,
           mode,
           pagesNeeded
         });
