@@ -34,6 +34,7 @@ export const ENTERPRISE_HEADCOUNT_TIERS = [
 ];
 
 // Universal Subdepartments across all 14 official Apollo Master Departments
+// Extracted from authentic Apollo production payloads and UI taxonomy
 export const APOLLO_MASTER_SUBDEPARTMENTS = {
   master_human_resources: [
     { key: 'recruiting_talent_acquisition', label: 'Recruiting & Talent Acquisition', queryKey: 'recruiting_talent_acquisition' },
@@ -50,63 +51,201 @@ export const APOLLO_MASTER_SUBDEPARTMENTS = {
     { key: 'culture_diversity_inclusion', label: 'Culture, Diversity & Inclusion', queryKey: 'culture_diversity_inclusion' },
     { key: 'health_safety', label: 'Health & Safety', queryKey: 'health_safety' }
   ],
-  master_sales: [
-    { key: 'sales_development', label: 'SDR / BDR', queryKey: 'sales_development' },
-    { key: 'account_executives', label: 'Direct Sales / AE', queryKey: 'account_executives' },
-    { key: 'customer_success', label: 'Customer Success & Retention', queryKey: 'customer_success' },
-    { key: 'sales_operations', label: 'Sales Operations & Enablement', queryKey: 'sales_operations' },
-    { key: 'channel_partnerships', label: 'Partnerships & Alliances', queryKey: 'channel_partnerships' },
-    { key: 'field_sales', label: 'Field & Enterprise Sales', queryKey: 'field_sales' },
-    { key: 'inside_sales', label: 'Inside Sales', queryKey: 'inside_sales' }
-  ],
-  master_marketing: [
-    { key: 'demand_generation', label: 'Demand Gen & Performance', queryKey: 'demand_generation' },
-    { key: 'content_marketing', label: 'Content & Inbound', queryKey: 'content_marketing' },
-    { key: 'product_marketing', label: 'Product Marketing', queryKey: 'product_marketing' },
-    { key: 'brand_marketing', label: 'Brand & Communications', queryKey: 'brand_marketing' },
-    { key: 'marketing_operations', label: 'Marketing Operations', queryKey: 'marketing_operations' },
-    { key: 'digital_marketing', label: 'Digital Marketing & Growth', queryKey: 'digital_marketing' },
-    { key: 'event_marketing', label: 'Event & Field Marketing', queryKey: 'event_marketing' }
+  c_suite: [
+    { key: 'executive', label: 'CEO & General Executive', queryKey: 'executive' },
+    { key: 'finance_executive', label: 'Finance Executive (CFO)', queryKey: 'finance_executive' },
+    { key: 'founder', label: 'Founder & Co-Founder', queryKey: 'founder' },
+    { key: 'human_resources_executive', label: 'HR Executive (CHRO)', queryKey: 'human_resources_executive' },
+    { key: 'information_technology_executive', label: 'IT Executive (CIO / CTO)', queryKey: 'information_technology_executive' },
+    { key: 'legal_executive', label: 'Legal Executive (GC / CLO)', queryKey: 'legal_executive' },
+    { key: 'marketing_executive', label: 'Marketing Executive (CMO)', queryKey: 'marketing_executive' },
+    { key: 'medical_health_executive', label: 'Medical & Health Executive', queryKey: 'medical_health_executive' },
+    { key: 'operations_executive', label: 'Operations Executive (COO)', queryKey: 'operations_executive' },
+    { key: 'sales_executive', label: 'Sales Executive (CRO / VP Sales)', queryKey: 'sales_executive' }
   ],
   master_engineering_technical: [
-    { key: 'software_engineering', label: 'Software Engineering', queryKey: 'software_engineering' },
-    { key: 'devops_sre', label: 'DevOps & Infrastructure', queryKey: 'devops_sre' },
-    { key: 'data_engineering', label: 'Data Engineering & Analytics', queryKey: 'data_engineering' },
-    { key: 'qa_testing', label: 'QA & Test Engineering', queryKey: 'qa_testing' },
-    { key: 'security_engineering', label: 'Security & InfoSec Engineering', queryKey: 'security_engineering' },
-    { key: 'systems_architecture', label: 'Systems & Architecture', queryKey: 'systems_architecture' }
+    { key: 'artificial_intelligence_machine_learning', label: 'AI & Machine Learning', queryKey: 'artificial_intelligence_machine_learning' },
+    { key: 'bioengineering', label: 'Bioengineering', queryKey: 'bioengineering' },
+    { key: 'biometrics', label: 'Biometrics', queryKey: 'biometrics' },
+    { key: 'business_intelligence', label: 'Business Intelligence', queryKey: 'business_intelligence' },
+    { key: 'chemical_engineering', label: 'Chemical Engineering', queryKey: 'chemical_engineering' },
+    { key: 'cloud_mobility', label: 'Cloud & Mobility', queryKey: 'cloud_mobility' },
+    { key: 'data_science', label: 'Data Science', queryKey: 'data_science' },
+    { key: 'devops', label: 'DevOps & SRE', queryKey: 'devops' },
+    { key: 'digital_transformation', label: 'Digital Transformation', queryKey: 'digital_transformation' },
+    { key: 'emerging_technology_innovation', label: 'Emerging Technology & Innovation', queryKey: 'emerging_technology_innovation' },
+    { key: 'engineering_technical', label: 'Engineering & Technical', queryKey: 'engineering_technical' },
+    { key: 'industrial_engineering', label: 'Industrial Engineering', queryKey: 'industrial_engineering' },
+    { key: 'mechanic', label: 'Mechanic', queryKey: 'mechanic' },
+    { key: 'mobile_development', label: 'Mobile Development', queryKey: 'mobile_development' },
+    { key: 'project_management', label: 'Technical Project Management', queryKey: 'project_management' },
+    { key: 'research_development', label: 'Research & Development (R&D)', queryKey: 'research_development' },
+    { key: 'scrum_master_agile_coach', label: 'Scrum Master & Agile Coach', queryKey: 'scrum_master_agile_coach' },
+    { key: 'software_development', label: 'Software Development', queryKey: 'software_development' },
+    { key: 'support_technical_services', label: 'Support & Technical Services', queryKey: 'support_technical_services' },
+    { key: 'technician', label: 'Technician', queryKey: 'technician' },
+    { key: 'technology_operations', label: 'Technology Operations', queryKey: 'technology_operations' },
+    { key: 'test_quality_assurance', label: 'Test & Quality Assurance', queryKey: 'test_quality_assurance' },
+    { key: 'ui_ux', label: 'UI/UX Engineering', queryKey: 'ui_ux' },
+    { key: 'web_development', label: 'Web Development', queryKey: 'web_development' }
+  ],
+  design: [
+    { key: 'all_design', label: 'All Design', queryKey: 'all_design' },
+    { key: 'product_ui_ux_design', label: 'Product & UI/UX Design', queryKey: 'product_ui_ux_design' },
+    { key: 'graphic_design', label: 'Graphic & Visual Design', queryKey: 'graphic_design' }
+  ],
+  education: [
+    { key: 'teacher', label: 'Teacher & Instructor', queryKey: 'teacher' },
+    { key: 'principal', label: 'Principal & School Administrator', queryKey: 'principal' },
+    { key: 'superintendent', label: 'Superintendent', queryKey: 'superintendent' },
+    { key: 'professor', label: 'Professor & Faculty', queryKey: 'professor' }
   ],
   master_finance: [
-    { key: 'accounting', label: 'Accounting & Bookkeeping', queryKey: 'accounting' },
-    { key: 'fpa', label: 'Financial Planning & Analysis (FP&A)', queryKey: 'fpa' },
-    { key: 'tax_treasury', label: 'Tax & Treasury', queryKey: 'tax_treasury' },
-    { key: 'audit_risk', label: 'Audit, Risk & Compliance', queryKey: 'audit_risk' },
-    { key: 'corporate_finance', label: 'Corporate Finance & M&A', queryKey: 'corporate_finance' }
-  ],
-  master_operations: [
-    { key: 'supply_chain', label: 'Supply Chain & Logistics', queryKey: 'supply_chain' },
-    { key: 'business_operations', label: 'Business Operations (BizOps)', queryKey: 'business_operations' },
-    { key: 'procurement', label: 'Procurement & Vendor Management', queryKey: 'procurement' },
-    { key: 'facilities', label: 'Facilities & Workplace', queryKey: 'facilities' },
-    { key: 'project_management', label: 'Project & Program Management', queryKey: 'project_management' }
+    { key: 'accounting', label: 'Accounting', queryKey: 'accounting' },
+    { key: 'finance', label: 'Finance (General)', queryKey: 'finance' },
+    { key: 'financial_planning_analysis', label: 'Financial Planning & Analysis (FP&A)', queryKey: 'financial_planning_analysis' },
+    { key: 'financial_reporting', label: 'Financial Reporting', queryKey: 'financial_reporting' },
+    { key: 'financial_strategy', label: 'Financial Strategy', queryKey: 'financial_strategy' },
+    { key: 'financial_systems', label: 'Financial Systems', queryKey: 'financial_systems' },
+    { key: 'internal_audit_control', label: 'Internal Audit & Control', queryKey: 'internal_audit_control' },
+    { key: 'investor_relations', label: 'Investor Relations', queryKey: 'investor_relations' },
+    { key: 'mergers_acquisitions', label: 'Mergers & Acquisitions (M&A)', queryKey: 'mergers_acquisitions' },
+    { key: 'real_estate_finance', label: 'Real Estate Finance', queryKey: 'real_estate_finance' },
+    { key: 'financial_risk', label: 'Financial Risk', queryKey: 'financial_risk' },
+    { key: 'shared_services', label: 'Shared Services', queryKey: 'shared_services' },
+    { key: 'sourcing_procurement', label: 'Sourcing & Procurement', queryKey: 'sourcing_procurement' },
+    { key: 'tax', label: 'Tax', queryKey: 'tax' }
   ],
   master_information_technology: [
-    { key: 'it_support', label: 'IT Support & Helpdesk', queryKey: 'it_support' },
-    { key: 'cybersecurity', label: 'Cybersecurity & InfoSec', queryKey: 'cybersecurity' },
-    { key: 'systems_network', label: 'Systems & Network Admin', queryKey: 'systems_network' },
-    { key: 'cloud_infra', label: 'Cloud Architecture & Enterprise Apps', queryKey: 'cloud_infra' },
-    { key: 'database_administration', label: 'Database Administration', queryKey: 'database_administration' }
-  ],
-  c_suite: [
-    { key: 'general_management', label: 'CEO / General Management', queryKey: 'general_management' },
-    { key: 'board_advisors', label: 'Board Members & Advisors', queryKey: 'board_advisors' },
-    { key: 'executive_leadership', label: 'Executive Leadership (CxO)', queryKey: 'executive_leadership' }
+    { key: 'application_development', label: 'Application Development', queryKey: 'application_development' },
+    { key: 'business_service_management_itsm', label: 'IT Service Management (ITSM)', queryKey: 'business_service_management_itsm' },
+    { key: 'collaboration_web_app', label: 'Collaboration & Web Apps', queryKey: 'collaboration_web_app' },
+    { key: 'data_center', label: 'Data Center', queryKey: 'data_center' },
+    { key: 'data_warehouse', label: 'Data Warehouse', queryKey: 'data_warehouse' },
+    { key: 'database_administration', label: 'Database Administration (DBA)', queryKey: 'database_administration' },
+    { key: 'ecommerce_development', label: 'eCommerce Development', queryKey: 'ecommerce_development' },
+    { key: 'enterprise_architecture', label: 'Enterprise Architecture', queryKey: 'enterprise_architecture' },
+    { key: 'help_desk_desktop_services', label: 'Help Desk & Desktop Support', queryKey: 'help_desk_desktop_services' },
+    { key: 'hr_financial_erp_systems', label: 'HR & Financial ERP Systems', queryKey: 'hr_financial_erp_systems' },
+    { key: 'information_security', label: 'Information Security & InfoSec', queryKey: 'information_security' },
+    { key: 'information_technology', label: 'Information Technology (General)', queryKey: 'information_technology' },
+    { key: 'infrastructure', label: 'Infrastructure & Cloud', queryKey: 'infrastructure' },
+    { key: 'it_asset_management', label: 'IT Asset Management', queryKey: 'it_asset_management' },
+    { key: 'it_audit_it_compliance', label: 'IT Audit & Compliance', queryKey: 'it_audit_it_compliance' },
+    { key: 'it_operations', label: 'IT Operations', queryKey: 'it_operations' },
+    { key: 'it_procurement', label: 'IT Procurement', queryKey: 'it_procurement' },
+    { key: 'it_strategy', label: 'IT Strategy', queryKey: 'it_strategy' },
+    { key: 'it_training', label: 'IT Training', queryKey: 'it_training' },
+    { key: 'networking', label: 'Networking & Telecommunications', queryKey: 'networking' },
+    { key: 'project_program_management', label: 'IT Project & Program Management', queryKey: 'project_program_management' },
+    { key: 'quality_assurance', label: 'IT Quality Assurance', queryKey: 'quality_assurance' },
+    { key: 'retail_store_systems', label: 'Retail & Store Systems', queryKey: 'retail_store_systems' },
+    { key: 'servers', label: 'Servers & Systems', queryKey: 'servers' },
+    { key: 'storage_disaster_recovery', label: 'Storage & Disaster Recovery', queryKey: 'storage_disaster_recovery' },
+    { key: 'telecommunications', label: 'Telecommunications', queryKey: 'telecommunications' }
   ],
   master_legal: [
-    { key: 'corporate_legal', label: 'Corporate & Commercial Counsel', queryKey: 'corporate_legal' },
-    { key: 'regulatory_compliance', label: 'Compliance & Regulatory', queryKey: 'regulatory_compliance' },
-    { key: 'intellectual_property', label: 'IP & Patent Law', queryKey: 'intellectual_property' },
-    { key: 'contracts', label: 'Contracts & Legal Operations', queryKey: 'contracts' }
+    { key: 'acquisitions', label: 'Acquisitions & Deals Legal', queryKey: 'acquisitions' },
+    { key: 'compliance', label: 'Compliance & Regulatory', queryKey: 'compliance' },
+    { key: 'contracts', label: 'Contracts & Commercial Agreements', queryKey: 'contracts' },
+    { key: 'corporate_secretary', label: 'Corporate Secretary & Governance', queryKey: 'corporate_secretary' },
+    { key: 'ediscovery', label: 'eDiscovery & Legal Tech', queryKey: 'ediscovery' },
+    { key: 'ethics', label: 'Ethics & Standards', queryKey: 'ethics' },
+    { key: 'governance', label: 'Corporate Governance', queryKey: 'governance' },
+    { key: 'governmental_affairs_regulatory_law', label: 'Government Affairs & Regulatory Law', queryKey: 'governmental_affairs_regulatory_law' },
+    { key: 'intellectual_property_patent', label: 'Intellectual Property & Patents', queryKey: 'intellectual_property_patent' },
+    { key: 'labor_employment', label: 'Labor & Employment', queryKey: 'labor_employment' },
+    { key: 'lawyer_attorney', label: 'Lawyer & Attorney', queryKey: 'lawyer_attorney' },
+    { key: 'legal', label: 'Legal (General)', queryKey: 'legal' },
+    { key: 'legal_counsel', label: 'In-House Legal Counsel', queryKey: 'legal_counsel' },
+    { key: 'legal_operations', label: 'Legal Operations', queryKey: 'legal_operations' },
+    { key: 'litigation', label: 'Litigation & Disputes', queryKey: 'litigation' }
+  ],
+  master_marketing: [
+    { key: 'advertising', label: 'Advertising & Paid Media', queryKey: 'advertising' },
+    { key: 'brand_management', label: 'Brand Management', queryKey: 'brand_management' },
+    { key: 'content_marketing', label: 'Content Marketing', queryKey: 'content_marketing' },
+    { key: 'customer_experience', label: 'Customer Experience (CX)', queryKey: 'customer_experience' },
+    { key: 'customer_marketing', label: 'Customer Marketing', queryKey: 'customer_marketing' },
+    { key: 'demand_generation', label: 'Demand Generation', queryKey: 'demand_generation' },
+    { key: 'digital_marketing', label: 'Digital Marketing & Growth', queryKey: 'digital_marketing' },
+    { key: 'ecommerce_marketing', label: 'eCommerce Marketing', queryKey: 'ecommerce_marketing' },
+    { key: 'field_marketing', label: 'Field Marketing', queryKey: 'field_marketing' },
+    { key: 'lead_generation', label: 'Lead Generation', queryKey: 'lead_generation' },
+    { key: 'marketing', label: 'Marketing (General)', queryKey: 'marketing' },
+    { key: 'marketing_analytics_insights', label: 'Marketing Analytics & Insights', queryKey: 'marketing_analytics_insights' },
+    { key: 'marketing_communications', label: 'Marketing Communications & PR', queryKey: 'marketing_communications' },
+    { key: 'marketing_operations', label: 'Marketing Operations (MOPs)', queryKey: 'marketing_operations' },
+    { key: 'product_marketing', label: 'Product Marketing', queryKey: 'product_marketing' },
+    { key: 'public_relations', label: 'Public Relations (PR)', queryKey: 'public_relations' },
+    { key: 'search_engine_optimization_pay_per_click', label: 'SEO & PPC', queryKey: 'search_engine_optimization_pay_per_click' },
+    { key: 'social_media_marketing', label: 'Social Media Marketing', queryKey: 'social_media_marketing' },
+    { key: 'strategic_communications', label: 'Strategic Communications', queryKey: 'strategic_communications' },
+    { key: 'technical_marketing', label: 'Technical Marketing', queryKey: 'technical_marketing' }
+  ],
+  medical_health: [
+    { key: 'anesthesiology', label: 'Anesthesiology', queryKey: 'anesthesiology' },
+    { key: 'chiropractics', label: 'Chiropractics', queryKey: 'chiropractics' },
+    { key: 'clinical_systems', label: 'Clinical Systems', queryKey: 'clinical_systems' },
+    { key: 'dentistry', label: 'Dentistry', queryKey: 'dentistry' },
+    { key: 'dermatology', label: 'Dermatology', queryKey: 'dermatology' },
+    { key: 'doctors_physicians', label: 'Doctors & Physicians', queryKey: 'doctors_physicians' },
+    { key: 'epidemiology', label: 'Epidemiology', queryKey: 'epidemiology' },
+    { key: 'first_responder', label: 'First Responder & Emergency', queryKey: 'first_responder' },
+    { key: 'infectious_disease', label: 'Infectious Disease', queryKey: 'infectious_disease' },
+    { key: 'medical_administration', label: 'Medical Administration', queryKey: 'medical_administration' },
+    { key: 'medical_education_training', label: 'Medical Education & Training', queryKey: 'medical_education_training' },
+    { key: 'medical_research', label: 'Medical Research & Clinical Trials', queryKey: 'medical_research' },
+    { key: 'neurology', label: 'Neurology', queryKey: 'neurology' },
+    { key: 'nursing', label: 'Nursing & Patient Care', queryKey: 'nursing' },
+    { key: 'nutrition_dietetics', label: 'Nutrition & Dietetics', queryKey: 'nutrition_dietetics' },
+    { key: 'obstetrics_gynecology', label: 'Obstetrics & Gynecology', queryKey: 'obstetrics_gynecology' },
+    { key: 'oncology', label: 'Oncology', queryKey: 'oncology' },
+    { key: 'opthalmology', label: 'Ophthalmology', queryKey: 'opthalmology' },
+    { key: 'optometry', label: 'Optometry', queryKey: 'optometry' },
+    { key: 'orthopedics', label: 'Orthopedics', queryKey: 'orthopedics' },
+    { key: 'pathology', label: 'Pathology & Lab Diagnostics', queryKey: 'pathology' },
+    { key: 'pediatrics', label: 'Pediatrics', queryKey: 'pediatrics' },
+    { key: 'pharmacy', label: 'Pharmacy & Pharmacology', queryKey: 'pharmacy' },
+    { key: 'physical_therapy', label: 'Physical Therapy & Rehab', queryKey: 'physical_therapy' },
+    { key: 'psychiatry', label: 'Psychiatry', queryKey: 'psychiatry' },
+    { key: 'psychology', label: 'Psychology', queryKey: 'psychology' },
+    { key: 'public_health', label: 'Public Health', queryKey: 'public_health' },
+    { key: 'radiology', label: 'Radiology & Imaging', queryKey: 'radiology' },
+    { key: 'social_work', label: 'Medical Social Work', queryKey: 'social_work' }
+  ],
+  master_operations: [
+    { key: 'call_center', label: 'Call Center & Support Operations', queryKey: 'call_center' },
+    { key: 'construction', label: 'Construction Operations', queryKey: 'construction' },
+    { key: 'corporate_strategy', label: 'Corporate Strategy', queryKey: 'corporate_strategy' },
+    { key: 'customer_service_support', label: 'Customer Service & Support', queryKey: 'customer_service_support' },
+    { key: 'enterprise_resource_planning', label: 'ERP Operations', queryKey: 'enterprise_resource_planning' },
+    { key: 'facilities_management', label: 'Facilities Management', queryKey: 'facilities_management' },
+    { key: 'leasing', label: 'Leasing Operations', queryKey: 'leasing' },
+    { key: 'logistics', label: 'Logistics & Distribution', queryKey: 'logistics' },
+    { key: 'office_operations', label: 'Office Operations', queryKey: 'office_operations' },
+    { key: 'physical_security', label: 'Physical Security', queryKey: 'physical_security' },
+    { key: 'project_development', label: 'Project Development', queryKey: 'project_development' },
+    { key: 'quality_management', label: 'Quality Management & Six Sigma', queryKey: 'quality_management' },
+    { key: 'real_estate', label: 'Real Estate Operations', queryKey: 'real_estate' },
+    { key: 'safety', label: 'Workplace Safety & EHS', queryKey: 'safety' },
+    { key: 'store_operations', label: 'Store Operations', queryKey: 'store_operations' },
+    { key: 'supply_chain', label: 'Supply Chain & Procurement', queryKey: 'supply_chain' }
+  ],
+  master_sales: [
+    { key: 'account_management', label: 'Account Management', queryKey: 'account_management' },
+    { key: 'business_development', label: 'Business Development (BDR)', queryKey: 'business_development' },
+    { key: 'channel_sales', label: 'Channel & Partner Sales', queryKey: 'channel_sales' },
+    { key: 'customer_retention_development', label: 'Customer Retention & Expansion', queryKey: 'customer_retention_development' },
+    { key: 'field_outside_sales', label: 'Field & Outside Sales', queryKey: 'field_outside_sales' },
+    { key: 'inside_sales', label: 'Inside Sales & SDR', queryKey: 'inside_sales' },
+    { key: 'partnerships', label: 'Partnerships & Alliances', queryKey: 'partnerships' },
+    { key: 'revenue_operations', label: 'Revenue Operations (RevOps)', queryKey: 'revenue_operations' },
+    { key: 'sales', label: 'Sales (General)', queryKey: 'sales' },
+    { key: 'sales_enablement', label: 'Sales Enablement', queryKey: 'sales_enablement' },
+    { key: 'sales_engineering', label: 'Sales Engineering (Solutions SE)', queryKey: 'sales_engineering' },
+    { key: 'sales_operations', label: 'Sales Operations (SalesOps)', queryKey: 'sales_operations' },
+    { key: 'sales_training', label: 'Sales Training & Coaching', queryKey: 'sales_training' }
   ],
   product_management: [
     { key: 'technical_product', label: 'Technical Product Management', queryKey: 'technical_product' },
@@ -114,28 +253,10 @@ export const APOLLO_MASTER_SUBDEPARTMENTS = {
     { key: 'product_strategy', label: 'Product Strategy & Roadmapping', queryKey: 'product_strategy' },
     { key: 'product_operations', label: 'Product Operations', queryKey: 'product_operations' }
   ],
-  design: [
-    { key: 'product_design', label: 'UI/UX & Product Design', queryKey: 'product_design' },
-    { key: 'graphic_design', label: 'Graphic, Brand & Media Design', queryKey: 'graphic_design' },
-    { key: 'creative_direction', label: 'Creative Direction', queryKey: 'creative_direction' },
-    { key: 'industrial_design', label: 'Industrial & Hardware Design', queryKey: 'industrial_design' }
-  ],
   consulting: [
     { key: 'management_consulting', label: 'Management & Strategy Consulting', queryKey: 'management_consulting' },
     { key: 'technical_consulting', label: 'Technical & Implementation Consulting', queryKey: 'technical_consulting' },
     { key: 'business_consulting', label: 'Business Transformation Consulting', queryKey: 'business_consulting' }
-  ],
-  medical_health: [
-    { key: 'clinical', label: 'Physicians & Clinical Practice', queryKey: 'clinical' },
-    { key: 'healthcare_admin', label: 'Healthcare & Hospital Operations', queryKey: 'healthcare_admin' },
-    { key: 'medical_research', label: 'Medical Research & Life Sciences', queryKey: 'medical_research' },
-    { key: 'pharmacy_allied', label: 'Pharmacy & Allied Health', queryKey: 'pharmacy_allied' }
-  ],
-  education: [
-    { key: 'faculty', label: 'Faculty & Instruction', queryKey: 'faculty' },
-    { key: 'education_admin', label: 'Academic Administration', queryKey: 'education_admin' },
-    { key: 'academic_research', label: 'Academic Research & Grants', queryKey: 'academic_research' },
-    { key: 'student_services', label: 'Student Affairs & Support', queryKey: 'student_services' }
   ]
 };
 
@@ -147,7 +268,8 @@ export function shouldEarlyExitHarvest({
   sliceTotal = null,
   addedInPage = 0,
   rawPeopleCount = 0,
-  pageSize = APOLLO_PAGE_SIZE
+  pageSize = APOLLO_PAGE_SIZE,
+  cabinetOverlapsInPage = undefined
 } = {}) {
   // 1. If sliceTotal is known and all available leads have been harvested, complete cabinet immediately
   if (typeof sliceTotal === 'number' && sliceTotal > 0 && sliceHarvested >= sliceTotal) {
@@ -158,22 +280,36 @@ export function shouldEarlyExitHarvest({
     };
   }
 
-  // 2. In Pass 2 (Z-A): if 0 fresh leads added, sweep has converged with Pass 1 (A-Z)
-  if (isPass2 && addedInPage === 0) {
-    return {
-      shouldExit: true,
-      status: 'EARLY_EXIT_SWEEP_CONVERGENCE',
-      reason: 'SWEEP_CONVERGENCE'
-    };
+  // 2. In Pass 2 (Z-A): if sweep has converged with Pass 1 (A-Z)
+  // True sweep convergence occurs when the leads returned on this page were ALREADY harvested
+  // in THIS specific cabinet (Pass 1). If cabinetOverlapsInPage is tracked: exit only when all
+  // returned leads on this page were already seen in this cabinet.
+  // Backwards-compatibility: If cabinetOverlapsInPage is undefined, fallback to addedInPage === 0.
+  if (isPass2) {
+    const isConverged = typeof cabinetOverlapsInPage === 'number'
+      ? (rawPeopleCount > 0 && cabinetOverlapsInPage >= rawPeopleCount)
+      : (addedInPage === 0);
+    if (isConverged) {
+      return {
+        shouldExit: true,
+        status: 'EARLY_EXIT_SWEEP_CONVERGENCE',
+        reason: 'SWEEP_CONVERGENCE'
+      };
+    }
   }
 
-  // 3. In Pass 1 (A-Z): if page > 1 and 0 fresh leads added, Apollo repeated prior page
+  // 3. In Pass 1 (A-Z): if page > 1 and 0 fresh leads added, check if Apollo repeated prior page
   if (!isPass2 && page > 1 && addedInPage === 0) {
-    return {
-      shouldExit: true,
-      status: 'EARLY_EXIT_ZERO_FRESH',
-      reason: 'ZERO_FRESH_ON_PAGINATION'
-    };
+    const isRepeated = typeof cabinetOverlapsInPage === 'number'
+      ? (rawPeopleCount > 0 && cabinetOverlapsInPage >= rawPeopleCount)
+      : true;
+    if (isRepeated) {
+      return {
+        shouldExit: true,
+        status: 'EARLY_EXIT_ZERO_FRESH',
+        reason: 'ZERO_FRESH_ON_PAGINATION'
+      };
+    }
   }
 
   // 4. Natural last page of cabinet (less than full page of leads returned)
@@ -1311,6 +1447,12 @@ export class SmartBatcher {
 export function subdivideCabinet(cabinet = {}, totalEntries = 0, options = {}) {
   const maxLimit = options.maxLeadsPerCabinet || MAX_BIDIRECTIONAL_LEADS;
   if (!totalEntries || totalEntries <= maxLimit) {
+    return [cabinet];
+  }
+
+  // Leaf granularity guard: Never re-subdivide cabinets that already represent subdepartments,
+  // untagged slices, or have been explicitly marked as leaf units.
+  if (cabinet.subdepartment || cabinet.isUntagged || cabinet._leaf) {
     return [cabinet];
   }
 
@@ -3763,6 +3905,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
                 emailStatus: emailPartition.values,
                 subdepartment: sub.queryKey,
                 department: masterDeptKey,
+                _leaf: true,
                 keyword: null,
                 total: subCount,
                 pagesNeeded: subPages,
@@ -3797,6 +3940,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
                   subdepartment: null,
                   department: masterDeptKey,
                   isUntagged: true,
+                  _leaf: true,
                   keyword: null,
                   total: untaggedCount,
                   pagesNeeded: untaggedPages,

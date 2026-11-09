@@ -8,6 +8,7 @@
   console.log('[Apollo Extractor] Main-world Engine initialized.');
 
   let activeSortConfig = null;
+  let lastNativePayload = null;
 
   // 1. Transparent Network Interceptor (XHR + Fetch)
   function installNetworkSniffer() {
@@ -45,12 +46,15 @@
     };
 
     XMLHttpRequest.prototype.send = function (body, ...rest) {
-      if (this._url && isApolloSearchUrl(this._url) && activeSortConfig && typeof body === 'string') {
+      if (this._url && isApolloSearchUrl(this._url) && typeof body === 'string') {
         try {
           const payload = JSON.parse(body);
-          payload.sort_by_field = activeSortConfig.sort_by_field;
-          payload.sort_ascending = activeSortConfig.sort_ascending;
-          body = JSON.stringify(payload);
+          lastNativePayload = payload;
+          if (activeSortConfig) {
+            payload.sort_by_field = activeSortConfig.sort_by_field;
+            payload.sort_ascending = activeSortConfig.sort_ascending;
+            body = JSON.stringify(payload);
+          }
         } catch (e) {}
       }
 
@@ -71,12 +75,15 @@
     const originalFetch = window.fetch;
     window.fetch = async function (resource, init, ...rest) {
       const url = typeof resource === 'string' ? resource : (resource?.url || '');
-      if (isApolloSearchUrl(url) && activeSortConfig && init && typeof init.body === 'string') {
+      if (isApolloSearchUrl(url) && init && typeof init.body === 'string') {
         try {
           const payload = JSON.parse(init.body);
-          payload.sort_by_field = activeSortConfig.sort_by_field;
-          payload.sort_ascending = activeSortConfig.sort_ascending;
-          init.body = JSON.stringify(payload);
+          lastNativePayload = payload;
+          if (activeSortConfig) {
+            payload.sort_by_field = activeSortConfig.sort_by_field;
+            payload.sort_ascending = activeSortConfig.sort_ascending;
+            init.body = JSON.stringify(payload);
+          }
         } catch (e) {}
       }
 
@@ -346,6 +353,65 @@
             success: false
           }, '*');
         });
+    }
+
+    // E. Command: Direct Main-World Fetch for Harvesting
+    if (event.data.type === 'APOLLO_DIRECT_FETCH_PAGE') {
+      const { requestId, page = 1, sort, filters = {} } = event.data;
+      const getCookie = (name) => {
+        const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+        return v ? v[2] : null;
+      };
+      const csrf = getCookie('X-CSRF-TOKEN') || '';
+      const isCompanySearch = (window.location.hash || '').includes('companies');
+      const searchUrl = isCompanySearch ? '/api/v1/mixed_companies/search' : '/api/v1/mixed_people/search';
+
+      // Build complete authentic payload cloning last active search payload or falling back to current filters
+      const basePayload = lastNativePayload ? JSON.parse(JSON.stringify(lastNativePayload)) : {};
+      const requestPayload = {
+        ...basePayload,
+        ...filters,
+        page: page,
+        per_page: basePayload.per_page || 25,
+        sort_by_field: sort?.sort_by_field || basePayload.sort_by_field || 'sanitized_organization_name_unanalyzed',
+        sort_ascending: typeof sort?.sort_ascending === 'boolean' ? sort.sort_ascending : (basePayload.sort_ascending ?? true)
+      };
+
+      fetch(searchUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrf
+        },
+        body: JSON.stringify(requestPayload)
+      })
+      .then(async res => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const isCompany = searchUrl.includes('mixed_companies') || searchUrl.includes('organizations');
+        const rawList = Array.isArray(data.people)
+          ? data.people
+          : (Array.isArray(data.organizations) ? data.organizations : (Array.isArray(data.accounts) ? data.accounts : []));
+        const people = isCompany ? rawList.map(item => ({ ...item, _entityType: 'companies' })) : rawList;
+
+        window.postMessage({
+          type: 'APOLLO_DIRECT_FETCH_PAGE_RESULT',
+          requestId,
+          success: true,
+          data: {
+            ...data,
+            people
+          }
+        }, '*');
+      })
+      .catch(err => {
+        window.postMessage({
+          type: 'APOLLO_DIRECT_FETCH_PAGE_RESULT',
+          requestId,
+          success: false,
+          error: err.message
+        }, '*');
+      });
     }
   });
 

@@ -132,6 +132,55 @@
     });
   }
 
+  function directFetchHarvestPage({ page = 1, sort, cabinet = {}, baseFilters = {}, timeoutMs = 8000 }) {
+    return new Promise((resolve) => {
+      const requestId = 'fetch_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      let timer = null;
+
+      const handler = (evt) => {
+        if (evt.data && evt.data.type === 'APOLLO_DIRECT_FETCH_PAGE_RESULT' && evt.data.requestId === requestId) {
+          window.removeEventListener('message', handler);
+          if (timer) clearTimeout(timer);
+          if (evt.data.success && evt.data.data) {
+            resolve(evt.data.data);
+          } else {
+            resolve(null);
+          }
+        }
+      };
+
+      window.addEventListener('message', handler);
+      timer = setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve(null);
+      }, timeoutMs);
+
+      const filters = {};
+      if (cabinet.bracket) {
+        filters.organization_num_employees_ranges = Array.isArray(cabinet.bracket) ? cabinet.bracket : [cabinet.bracket];
+      }
+      if (cabinet.seniority && cabinet.seniority !== 'All') {
+        filters.person_seniorities = Array.isArray(cabinet.seniority) ? cabinet.seniority : [cabinet.seniority];
+      }
+      if (cabinet.emailStatus && cabinet.emailStatus !== 'All') {
+        filters.contact_email_status = Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus : [cabinet.emailStatus];
+      }
+      if (cabinet.subdepartment) {
+        filters.person_department_or_subdepartments = [cabinet.subdepartment];
+      } else if (cabinet.department) {
+        filters.person_department_or_subdepartments = [cabinet.department];
+      }
+
+      window.postMessage({
+        type: 'APOLLO_DIRECT_FETCH_PAGE',
+        requestId,
+        page,
+        sort,
+        filters
+      }, '*');
+    });
+  }
+
   async function probeDensity(filters, attempt = 1) {
     while (isPaused && !harvestAbort) {
       if (hud) hud.setStatus('⏸ Preflight Probing paused by operator');
@@ -458,6 +507,7 @@
       let sliceHarvested = 0;
       let wasSubdivided = false;
       let wasEmpty = false;
+      const cabinetSeenIds = new Set();
 
       hud.updateProgress({
         sliceIdx: i + 1,
@@ -499,23 +549,38 @@
           latencyMs: currentLatencyMs,
           isLatencySpike: currentIsSpike
         });
-        const waitPromise = waitForBatch();
 
-        if (page === 1) {
-          const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
-          window.postMessage({
-            type: 'APOLLO_NAVIGATE_HASH',
-            hash: newHash,
+        let data = null;
+        const reqStart1 = performance.now();
+
+        // Direct Main-World Fetch (Instant, zero DOM freeze, immune to pagination UI changes)
+        if (window.__APOLLO_DIRECT_FETCH_ENABLED__ !== false) {
+          data = await directFetchHarvestPage({
+            page,
             sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true },
-            resetPage1: true
-          }, '*');
-          window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
-        } else {
-          window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+            cabinet,
+            baseFilters
+          });
         }
 
-        const reqStart1 = performance.now();
-        let data = await waitPromise;
+        // Fallback to UI Hash Navigation & DOM Pagination
+        if (!data) {
+          const waitPromise = waitForBatch();
+          if (page === 1) {
+            const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
+            window.postMessage({
+              type: 'APOLLO_NAVIGATE_HASH',
+              hash: newHash,
+              sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true },
+              resetPage1: true
+            }, '*');
+            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+          } else {
+            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+          }
+          data = await waitPromise;
+        }
+
         const reqLatencyMs1 = Math.round(performance.now() - reqStart1);
         telemetry.recordRequest(reqLatencyMs1);
 
@@ -573,9 +638,11 @@
 
           // 2. Dynamic Runtime Cabinet Reduction
           // If total entries exceed 300 (max reachable with bidirectional sort), subdivide cabinet!
-          if (sliceTotal > 300) {
+          // Strictly guarded: Leaves (subdepartments, untagged slices, already subdivided) must NEVER subdivide recursively.
+          if (sliceTotal > 300 && !cabinet.subdepartment && !cabinet.isUntagged && !cabinet._hasSubdivided && !cabinet._leaf) {
             const subCabinets = subdivideCabinet(cabinet, sliceTotal, { baseFilters });
             if (subCabinets && subCabinets.length > 1) {
+              subCabinets.forEach(sub => { sub._hasSubdivided = true; sub._leaf = true; });
               console.log(`[Apollo Extractor] ⚡ Cabinet [${sliceLabel}] has ${sliceTotal} leads (> 300 limit). Subdividing into ${subCabinets.length} sub-cabinets:`, subCabinets.map(s => s.label));
               cabinets.splice(i, 1, ...subCabinets);
               totalSlices = cabinets.length;
@@ -636,8 +703,15 @@
 
         const outOfBoundsCount = Math.max(0, rawPeople.length - people.length);
 
+        let cabinetOverlapsInPage = 0;
         let addedInPage = 0;
         for (const person of people) {
+          const id = person.id || person._id || person.email || person.name;
+          if (id && cabinetSeenIds.has(id)) {
+            cabinetOverlapsInPage++;
+          } else if (id) {
+            cabinetSeenIds.add(id);
+          }
           if (dedupeStore.add(person)) {
             addedInPage++;
             sliceHarvested++;
@@ -650,7 +724,8 @@
           sliceHarvested,
           sliceTotal,
           addedInPage,
-          rawPeopleCount: rawPeople.length
+          rawPeopleCount: rawPeople.length,
+          cabinetOverlapsInPage
         });
 
         const delay = generatePacingDelay(2000, 3200);
@@ -753,23 +828,37 @@
             latencyMs: currentLatencyMs,
             isLatencySpike: currentIsSpike
           });
-          const waitPromise = waitForBatch();
+          let data = null;
+          const reqStart2 = performance.now();
 
-          if (page === 1) {
-            const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
-            window.postMessage({
-              type: 'APOLLO_NAVIGATE_HASH',
-              hash: newHash,
+          // Direct Main-World Fetch (Fast Z-A retrieval)
+          if (window.__APOLLO_DIRECT_FETCH_ENABLED__ !== false) {
+            data = await directFetchHarvestPage({
+              page,
               sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false },
-              resetPage1: true
-            }, '*');
-            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
-          } else {
-            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+              cabinet,
+              baseFilters
+            });
           }
 
-          const reqStart2 = performance.now();
-          let data = await waitPromise;
+          // Fallback to UI Hash Navigation & DOM Pagination
+          if (!data) {
+            const waitPromise = waitForBatch();
+            if (page === 1) {
+              const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
+              window.postMessage({
+                type: 'APOLLO_NAVIGATE_HASH',
+                hash: newHash,
+                sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false },
+                resetPage1: true
+              }, '*');
+              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+            } else {
+              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+            }
+            data = await waitPromise;
+          }
+
           const reqLatencyMs2 = Math.round(performance.now() - reqStart2);
           telemetry.recordRequest(reqLatencyMs2);
 
@@ -802,8 +891,15 @@
 
           const outOfBoundsCount = Math.max(0, rawPeople.length - people.length);
 
+          let cabinetOverlapsInPage = 0;
           let addedInPage = 0;
           for (const person of people) {
+            const id = person.id || person._id || person.email || person.name;
+            if (id && cabinetSeenIds.has(id)) {
+              cabinetOverlapsInPage++;
+            } else if (id) {
+              cabinetSeenIds.add(id);
+            }
             if (dedupeStore.add(person)) {
               addedInPage++;
               sliceHarvested++;
@@ -816,7 +912,8 @@
             sliceHarvested,
             sliceTotal,
             addedInPage,
-            rawPeopleCount: rawPeople.length
+            rawPeopleCount: rawPeople.length,
+            cabinetOverlapsInPage
           });
 
           const delay = generatePacingDelay(2000, 3200);
