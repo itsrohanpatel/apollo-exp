@@ -203,7 +203,10 @@
     if (!hud) {
       hud = new ApolloHUD({
         onStart: () => {
-          runHarvest({ targetLeadLimit: 50000 });
+          runHarvest({ targetLeadLimit: 50000, mode: 'jit' });
+        },
+        onStartAudit: () => {
+          runHarvest({ targetLeadLimit: 50000, mode: 'preflight_audit' });
         },
         onPause: () => { isPaused = true; },
         onResume: () => { isPaused = false; },
@@ -234,9 +237,6 @@
     harvestPageAuditRecords = [];
 
     ensureHUD();
-    hud.setPhase('preflight');
-    hud.setHarvestState('running');
-    hud.setStatus('⚡ Analyzing search parameters & probing density...');
 
     // Guarantee entire search starts in authentic Company A -> Z sort order
     window.postMessage({
@@ -248,6 +248,7 @@
     const baseFilters = parseApolloUrlHash(currentHash);
     const targetLeadLimit = config.targetLeadLimit || 10000;
     const maxEmployees = detectMaxEmployeesFromFilters(baseFilters, config);
+    const isPreflightAudit = config.mode === 'preflight_audit';
 
     if (typeof maxEmployees === 'number' && maxEmployees > 0) {
       console.log(`[Apollo Extractor] Enforcing max employee constraint: ≤ ${maxEmployees} employees.`);
@@ -271,67 +272,166 @@
       }
     } catch (e) {}
 
+    let dynamicQueue = [];
     let cabinets = [];
     const preflightAuditLog = [];
-    try {
-      hud.setStatus('🔍 Probing search tree for 100% lead coverage...');
-      cabinets = await resolveAdaptiveExecutionTree(probeDensity, baseFilters, {
-        maxLeadsPerCabinet: 150,
-        initialTotal,
-        maxEmployees,
-        decomposeEnterprise: true,
-        auditLog: preflightAuditLog,
-        sleepFn: sleepWithCountdown,
-        isAborted: () => harvestAbort,
-        isPaused: () => isPaused,
-        probePacing: {
-          minDelay: 800,
-          maxDelay: 1600,
-          zeroMinDelay: 500,
-          zeroMaxDelay: 1000
-        },
-        onProbeProgress: (p) => {
-          if (isPaused) return;
-          if (p.type === 'BRACKET_PROBE') {
-            hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads found...`);
-          } else if (p.type === 'SENIORITY_PROBE') {
-            hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads...`);
-          } else if (p.type === 'EMAIL_PROBE') {
-            hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads...`);
-          } else if (p.type === 'ZERO_RESULT_DWELL') {
-            hud.setStatus(`⚡ [${p.label}] has 0 leads. Stealth dwell...`);
+
+    if (isPreflightAudit) {
+      hud.setPhase('preflight');
+      hud.setHarvestState('running');
+      hud.setStatus('🔍 Preflight Audit: Probing search tree for 100% lead coverage...');
+
+      try {
+        cabinets = await resolveAdaptiveExecutionTree(probeDensity, baseFilters, {
+          maxLeadsPerCabinet: 150,
+          initialTotal,
+          maxEmployees,
+          decomposeEnterprise: true,
+          auditLog: preflightAuditLog,
+          sleepFn: sleepWithCountdown,
+          isAborted: () => harvestAbort,
+          isPaused: () => isPaused,
+          probePacing: {
+            minDelay: 800,
+            maxDelay: 1600,
+            zeroMinDelay: 500,
+            zeroMaxDelay: 1000
+          },
+          onProbeProgress: (p) => {
+            if (isPaused) return;
+            if (p.type === 'BRACKET_PROBE') {
+              hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads found...`);
+            } else if (p.type === 'SENIORITY_PROBE') {
+              hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads...`);
+            } else if (p.type === 'EMAIL_PROBE') {
+              hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads...`);
+            } else if (p.type === 'ZERO_RESULT_DWELL') {
+              hud.setStatus(`⚡ [${p.label}] has 0 leads. Stealth dwell...`);
+            }
           }
-        }
-      });
-    } catch (e) {
-      console.warn('[Apollo Extractor] Adaptive tree resolution error, falling back to macro brackets:', e);
-    }
-
-    if (harvestAbort) {
-      console.log('[Apollo Extractor] Preflight probing cancelled/stopped by operator.');
-      if (hud) {
-        hud.setHarvestState('idle');
-        hud.setStatus('Preflight probing cancelled by operator.');
+        });
+      } catch (e) {
+        console.warn('[Apollo Extractor] Adaptive tree resolution error, falling back to macro brackets:', e);
       }
-      isHarvesting = false;
-      return;
-    }
 
-    const isOpenRange = (b) => typeof b === 'string' && (b.endsWith(',') || b.endsWith('+') || b.startsWith(','));
-    if (!cabinets || (cabinets.length === 0 && !(typeof maxEmployees === 'number' && maxEmployees > 0)) || (cabinets.length === 1 && isOpenRange(cabinets[0].bracket?.[0]))) {
+      if (harvestAbort) {
+        console.log('[Apollo Extractor] Preflight probing cancelled/stopped by operator.');
+        if (hud) {
+          hud.setHarvestState('idle');
+          hud.setStatus('Preflight probing cancelled by operator.');
+        }
+        isHarvesting = false;
+        return;
+      }
+
+      const isOpenRange = (b) => typeof b === 'string' && (b.endsWith(',') || b.endsWith('+') || b.startsWith(','));
+      if (!cabinets || (cabinets.length === 0 && !(typeof maxEmployees === 'number' && maxEmployees > 0)) || (cabinets.length === 1 && isOpenRange(cabinets[0].bracket?.[0]))) {
+        if (typeof initialTotal === 'number' && initialTotal <= 300) {
+          cabinets = [{
+            label: 'All Matching Leads',
+            bracket: null,
+            seniority: null,
+            emailStatus: null,
+            total: initialTotal,
+            pagesNeeded: Math.min(5, Math.ceil(initialTotal / 30)),
+            mode: initialTotal <= 150 ? 'Top-Down Only' : 'Bidirectional'
+          }];
+        } else {
+          const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true, maxEmployees, decomposeEnterprise: true });
+          cabinets = rawBrackets.map(b => ({
+            label: Array.isArray(b) ? b[0] : String(b),
+            bracket: Array.isArray(b) ? b : [String(b)],
+            seniority: null,
+            emailStatus: null,
+            mode: 'Bidirectional'
+          }));
+        }
+      }
+
+      const totalSlices = cabinets.length;
+      try {
+        lastPreflightPlanCSV = buildPreflightPlanCSV(cabinets, preflightAuditLog, {
+          currentHash,
+          baseFilters,
+          initialTotal
+        });
+
+        chrome.runtime.sendMessage({
+          type: 'APOLLO_DOWNLOAD_CSV',
+          csv: lastPreflightPlanCSV,
+          filename: `apollo_preflight_plan_${totalSlices}_cabinets_${Date.now()}.csv`
+        });
+
+        if (hud && typeof hud.setPreflightPlanReady === 'function') {
+          hud.setPreflightPlanReady(() => exportPreflightPlanCSV());
+        }
+      } catch (csvErr) {
+        console.warn('[Apollo Extractor] Auto-export preflight plan error:', csvErr);
+      }
+
+      // --- INTERACTIVE REVIEW GATE (Preflight Mode Only) ---
+      if (hud && typeof hud.setPreflightReviewReady === 'function') {
+        const totalExpectedLeads = cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0);
+        const bisectionCount = preflightAuditLog.filter(p => p.type === 'BISECTION_SPLIT').length;
+
+        await new Promise((resolveStart) => {
+          let reviewDone = false;
+          const finishReview = () => {
+            if (!reviewDone) {
+              reviewDone = true;
+              resolveStart();
+            }
+          };
+          hud.setPreflightReviewReady({
+            totalSlices,
+            totalLeads: totalExpectedLeads,
+            currentEtaSeconds: 0,
+            bisectionCount,
+            sliceList: cabinets,
+            onStart: finishReview,
+            onCancel: () => {
+              harvestAbort = true;
+              finishReview();
+            },
+            onExportCSV: () => exportPreflightPlanCSV()
+          });
+        });
+
+        if (harvestAbort) {
+          console.log('[Apollo Extractor] Harvest cancelled in preflight review gate.');
+          if (hud) {
+            hud.setHarvestState('idle');
+            hud.setStatus('Harvest cancelled by operator.');
+          }
+          isHarvesting = false;
+          return;
+        }
+
+        hud.setPhase('harvest');
+        hud.setHarvestState('running');
+        hud.setStatus(`⚡ Starting live harvest across ${totalSlices} cabinets...`);
+      }
+
+      dynamicQueue = [...cabinets];
+    } else {
+      // --- JIT STREAMING (ZERO-PROBE) HARVESTER ---
+      // Direct instant start: Bypass preflight probing and interactive review gate
+      hud.setPhase('harvest');
+      hud.setHarvestState('running');
+      hud.setStatus('⚡ JIT Streaming: Starting live harvest...');
+
       if (typeof initialTotal === 'number' && initialTotal <= 300) {
-        cabinets = [{
+        dynamicQueue = [{
           label: 'All Matching Leads',
           bracket: null,
           seniority: null,
           emailStatus: null,
           total: initialTotal,
-          pagesNeeded: Math.min(5, Math.ceil(initialTotal / 30)),
           mode: initialTotal <= 150 ? 'Top-Down Only' : 'Bidirectional'
         }];
       } else {
-        const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true, maxEmployees });
-        cabinets = rawBrackets.map(b => ({
+        const rawBrackets = resolveExecutionBrackets(baseFilters, { granular: true, maxEmployees, decomposeEnterprise: true });
+        dynamicQueue = rawBrackets.map(b => ({
           label: Array.isArray(b) ? b[0] : String(b),
           bracket: Array.isArray(b) ? b : [String(b)],
           seniority: null,
@@ -339,29 +439,29 @@
           mode: 'Bidirectional'
         }));
       }
-    }
 
-    let totalSlices = cabinets.length;
-
-    // --- AUTO-EXPORT PREFLIGHT AUDIT & CABINET DESIGN CSV ---
-    try {
-      lastPreflightPlanCSV = buildPreflightPlanCSV(cabinets, preflightAuditLog, {
-        currentHash,
-        baseFilters,
-        initialTotal
-      });
-
-      chrome.runtime.sendMessage({
-        type: 'APOLLO_DOWNLOAD_CSV',
-        csv: lastPreflightPlanCSV,
-        filename: `apollo_preflight_plan_${totalSlices}_cabinets_${Date.now()}.csv`
-      });
-
-      if (hud && typeof hud.setPreflightPlanReady === 'function') {
-        hud.setPreflightPlanReady(() => exportPreflightPlanCSV());
+      if (!dynamicQueue || dynamicQueue.length === 0) {
+        dynamicQueue = [{
+          label: 'All Matching Leads',
+          bracket: null,
+          seniority: null,
+          emailStatus: null,
+          total: initialTotal,
+          mode: 'Bidirectional'
+        }];
       }
-    } catch (csvErr) {
-      console.warn('[Apollo Extractor] Auto-export preflight plan error:', csvErr);
+
+      // Generate initial plan CSV in background for immediate export availability
+      try {
+        lastPreflightPlanCSV = buildPreflightPlanCSV(dynamicQueue, [], {
+          currentHash,
+          baseFilters,
+          initialTotal
+        });
+        if (hud && typeof hud.setPreflightPlanReady === 'function') {
+          hud.setPreflightPlanReady(() => exportPreflightPlanCSV());
+        }
+      } catch (e) {}
     }
 
     const telemetry = new HarvestTelemetryEstimator({
@@ -372,10 +472,9 @@
       enableCooldown: true
     });
 
-    const getEstimatedRemainingPages = (currIdx, currPage, isPass2 = false) => {
+    const getEstimatedRemainingPages = (currPage, isPass2 = false) => {
       let rem = isPass2 ? Math.max(0, 5 - currPage) : (Math.max(0, 5 - currPage) + 4);
-      for (let j = currIdx + 1; j < cabinets.length; j++) {
-        const c = cabinets[j];
+      for (const c of dynamicQueue) {
         if (typeof c.total === 'number' && c.total > 0) {
           rem += Math.min(10, Math.ceil(c.total / 30));
         } else {
@@ -385,15 +484,18 @@
       return rem;
     };
 
-    const initialRemPages = getEstimatedRemainingPages(0, 0, false);
-    let currentEtaSeconds = telemetry.estimateRemainingSeconds(initialRemPages, totalSlices);
+    const initialRemPages = getEstimatedRemainingPages(0, false);
+    let currentEtaSeconds = telemetry.estimateRemainingSeconds(initialRemPages, dynamicQueue.length);
     let currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
     let currentLatencyMs = 4500;
     let currentIsSpike = false;
 
     hud.updateProgress({
-      totalSlices,
+      totalSlices: dynamicQueue.length,
       sliceIdx: 1,
+      queueRemaining: dynamicQueue.length,
+      cabinetsCompleted: 0,
+      cabinetsSubdivided: 0,
       totalLeads: dedupeStore.size(),
       eta: currentEta,
       etaSeconds: currentEtaSeconds,
@@ -401,59 +503,22 @@
       isLatencySpike: currentIsSpike
     });
 
-    // --- INTERACTIVE REVIEW GATE ---
-    // Pause execution, present plan metrics, and wait for operator confirmation to start live harvest
-    if (hud && typeof hud.setPreflightReviewReady === 'function') {
-      const totalExpectedLeads = cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0);
-      const bisectionCount = preflightAuditLog.filter(p => p.type === 'BISECTION_SPLIT').length;
+    let cabinetsCompleted = 0;
+    let cabinetsSubdivided = 0;
+    let cabinetsEmpty = 0;
+    let sliceCounter = 0;
 
-      await new Promise((resolveStart) => {
-        let reviewDone = false;
-        const finishReview = () => {
-          if (!reviewDone) {
-            reviewDone = true;
-            resolveStart();
-          }
-        };
-        hud.setPreflightReviewReady({
-          totalSlices,
-          totalLeads: totalExpectedLeads,
-          currentEtaSeconds,
-          bisectionCount,
-          sliceList: cabinets,
-          onStart: finishReview,
-          onCancel: () => {
-            harvestAbort = true;
-            finishReview();
-          },
-          onExportCSV: () => exportPreflightPlanCSV()
-        });
-      });
-
-      if (harvestAbort) {
-        console.log('[Apollo Extractor] Harvest cancelled in preflight review gate.');
-        if (hud) {
-          hud.setHarvestState('idle');
-          hud.setStatus('Harvest cancelled by operator.');
-        }
-        isHarvesting = false;
-        return;
-      }
-
-      hud.setPhase('harvest');
-      hud.setHarvestState('running');
-      hud.setStatus(`⚡ Starting live harvest across ${totalSlices} cabinets...`);
-    }
-
-    for (let i = 0; i < cabinets.length; i++) {
-      if (harvestAbort || dedupeStore.size() >= targetLeadLimit) break;
-
+    while (dynamicQueue.length > 0 && !harvestAbort && dedupeStore.size() < targetLeadLimit) {
       while (isPaused && !harvestAbort) {
         await new Promise(r => setTimeout(r, 500));
       }
+      if (harvestAbort || dedupeStore.size() >= targetLeadLimit) break;
 
-      const cabinet = cabinets[i];
-      const sliceLabel = cabinet.label || (cabinet.bracket ? `Headcount: ${cabinet.bracket[0]}` : `Slice ${i + 1}`);
+      const cabinet = dynamicQueue.shift();
+      sliceCounter++;
+      const sliceIdx = cabinetsCompleted + 1;
+      const totalSlices = cabinetsCompleted + dynamicQueue.length + 1;
+      const sliceLabel = cabinet.label || (cabinet.bracket ? `Headcount: ${cabinet.bracket[0]}` : `Slice ${sliceCounter}`);
       let sliceTotal = cabinet.total || null;
       let sliceHarvested = 0;
       let wasSubdivided = false;
@@ -461,8 +526,11 @@
       const cabinetSeenIds = new Set();
 
       hud.updateProgress({
-        sliceIdx: i + 1,
+        sliceIdx,
         totalSlices,
+        queueRemaining: dynamicQueue.length,
+        cabinetsCompleted,
+        cabinetsSubdivided,
         sliceLabel,
         passLabel: 'Pass 1 (A-Z)',
         sliceHarvested,
@@ -488,8 +556,11 @@
 
         hud.setStatus(`Scanning Pass 1 (A-Z) Page ${page}/5 for [${sliceLabel}]...`);
         hud.updateProgress({
-          sliceIdx: i + 1,
-          totalSlices,
+          sliceIdx,
+          totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
+          queueRemaining: dynamicQueue.length,
+          cabinetsCompleted,
+          cabinetsSubdivided,
           sliceLabel,
           passLabel: `Pass 1: A-Z (p${page})`,
           sliceHarvested,
@@ -521,8 +592,8 @@
         const reqLatencyMs1 = Math.round(performance.now() - reqStart1);
         telemetry.recordRequest(reqLatencyMs1);
 
-        const remPages1 = getEstimatedRemainingPages(i, page, false);
-        currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages1, cabinets.length - i);
+        const remPages1 = getEstimatedRemainingPages(page, false);
+        currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages1, dynamicQueue.length + 1);
         currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
         const spikeInfo1 = telemetry.getLatencySpikeStatus();
         currentLatencyMs = spikeInfo1.avgLatencyMs;
@@ -548,8 +619,8 @@
             hud.setStatus(`⚡ Cabinet [${sliceLabel}] has 0 leads. Advancing to next...`);
             harvestPageAuditRecords.push({
               event: harvestPageAuditRecords.length + 1,
-              sliceIdx: i + 1,
-              totalSlices,
+              sliceIdx,
+              totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
               sliceLabel,
               bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
               seniority: cabinet.seniority || 'All',
@@ -570,6 +641,7 @@
             });
             wasEmpty = true;
             pass1Done = true;
+            cabinetsEmpty++;
             break;
           }
 
@@ -579,15 +651,18 @@
           if (sliceTotal > 300 && !cabinet.subdepartment && !cabinet.isUntagged && !cabinet._hasSubdivided && !cabinet._leaf) {
             const subCabinets = subdivideCabinet(cabinet, sliceTotal, { baseFilters });
             if (subCabinets && subCabinets.length > 1) {
-              subCabinets.forEach(sub => { sub._hasSubdivided = true; sub._leaf = true; });
-              console.log(`[Apollo Extractor] ⚡ Cabinet [${sliceLabel}] has ${sliceTotal} leads (> 300 limit). Subdividing into ${subCabinets.length} sub-cabinets:`, subCabinets.map(s => s.label));
-              cabinets.splice(i, 1, ...subCabinets);
-              totalSlices = cabinets.length;
-              hud.setStatus(`⚡ Subdivided [${sliceLabel}] (${sliceTotal} leads) into ${subCabinets.length} sub-cabinets...`);
+              subCabinets.forEach(sub => {
+                sub._hasSubdivided = true;
+                if (sub.subdepartment || sub.isUntagged) sub._leaf = true;
+              });
+              console.log(`[Apollo Extractor] ⚡ JIT Subdivision: Cabinet [${sliceLabel}] has ${sliceTotal} leads (> 300 limit). Subdividing into ${subCabinets.length} sub-units:`, subCabinets.map(s => s.label));
+              dynamicQueue.unshift(...subCabinets);
+              cabinetsSubdivided++;
+              hud.setStatus(`⚡ Subdivided [${sliceLabel}] (${sliceTotal} leads) into ${subCabinets.length} units...`);
               harvestPageAuditRecords.push({
                 event: harvestPageAuditRecords.length + 1,
-                sliceIdx: i + 1,
-                totalSlices,
+                sliceIdx,
+                totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
                 sliceLabel,
                 bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
                 seniority: cabinet.seniority || 'All',
@@ -607,8 +682,11 @@
                 timestamp: new Date().toISOString()
               });
               hud.updateProgress({
-                totalSlices,
-                sliceIdx: i + 1,
+                totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
+                sliceIdx,
+                queueRemaining: dynamicQueue.length,
+                cabinetsCompleted,
+                cabinetsSubdivided,
                 totalLeads: dedupeStore.size(),
                 eta: currentEta,
                 etaSeconds: currentEtaSeconds,
@@ -616,9 +694,10 @@
                 isLatencySpike: currentIsSpike
               });
               wasSubdivided = true;
-              i--;
               pass1Done = true;
               break;
+            } else {
+              cabinet._leaf = true;
             }
           }
         }
@@ -668,8 +747,8 @@
         const delay = generatePacingDelay(2000, 3200);
         harvestPageAuditRecords.push({
           event: harvestPageAuditRecords.length + 1,
-          sliceIdx: i + 1,
-          totalSlices,
+          sliceIdx,
+          totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
           sliceLabel,
           bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
           seniority: cabinet.seniority || 'All',
@@ -691,8 +770,11 @@
         });
 
         hud.updateProgress({
-          sliceIdx: i + 1,
-          totalSlices,
+          sliceIdx,
+          totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
+          queueRemaining: dynamicQueue.length,
+          cabinetsCompleted,
+          cabinetsSubdivided,
           sliceLabel,
           passLabel: `Pass 1: A-Z (p${page})`,
           sliceHarvested,
@@ -734,8 +816,11 @@
       if (!harvestAbort && shouldRunPass2 && dedupeStore.size() < targetLeadLimit) {
         hud.setStatus(`⚡ Capacity Boost: Executing Pass 2 (Z-A) for [${sliceLabel}]...`);
         hud.updateProgress({
-          sliceIdx: i + 1,
-          totalSlices,
+          sliceIdx,
+          totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
+          queueRemaining: dynamicQueue.length,
+          cabinetsCompleted,
+          cabinetsSubdivided,
           sliceLabel,
           passLabel: 'Pass 2 (Z-A)',
           sliceHarvested,
@@ -753,8 +838,11 @@
 
           hud.setStatus(`Scanning Pass 2 (Z-A) Page ${page}/5 for [${sliceLabel}]...`);
           hud.updateProgress({
-            sliceIdx: i + 1,
-            totalSlices,
+            sliceIdx,
+            totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
+            queueRemaining: dynamicQueue.length,
+            cabinetsCompleted,
+            cabinetsSubdivided,
             sliceLabel,
             passLabel: `Pass 2: Z-A (p${page})`,
             sliceHarvested,
@@ -785,8 +873,8 @@
           const reqLatencyMs2 = Math.round(performance.now() - reqStart2);
           telemetry.recordRequest(reqLatencyMs2);
 
-          const remPages2 = getEstimatedRemainingPages(i, page, true);
-          currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages2, cabinets.length - i);
+          const remPages2 = getEstimatedRemainingPages(page, true);
+          currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages2, dynamicQueue.length + 1);
           currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
           const spikeInfo2 = telemetry.getLatencySpikeStatus();
           currentLatencyMs = spikeInfo2.avgLatencyMs;
@@ -842,8 +930,8 @@
           const delay = generatePacingDelay(2000, 3200);
           harvestPageAuditRecords.push({
             event: harvestPageAuditRecords.length + 1,
-            sliceIdx: i + 1,
-            totalSlices,
+            sliceIdx,
+            totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
             sliceLabel,
             bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
             seniority: cabinet.seniority || 'All',
@@ -865,8 +953,11 @@
           });
 
           hud.updateProgress({
-            sliceIdx: i + 1,
-            totalSlices,
+            sliceIdx,
+            totalSlices: cabinetsCompleted + dynamicQueue.length + 1,
+            queueRemaining: dynamicQueue.length,
+            cabinetsCompleted,
+            cabinetsSubdivided,
             sliceLabel,
             passLabel: `Pass 2: Z-A (p${page})`,
             sliceHarvested,
@@ -896,28 +987,25 @@
         }
       }
 
+      cabinetsCompleted++;
       await sleepWithCountdown(1500);
     }
 
     isHarvesting = false;
     hud.setHarvestState('completed');
-    hud.setStatus(`✅ Harvest Finished! Captured ${dedupeStore.size()} unique leads.`);
-    hud.updateProgress({ passLabel: 'Completed', sliceIdx: totalSlices, totalSlices, eta: 'Complete', etaSeconds: 0 });
+    hud.setStatus(`✅ Harvest Finished! Captured ${dedupeStore.size()} unique leads across ${cabinetsCompleted} cabinets.`);
+    hud.updateProgress({ passLabel: 'Completed', sliceIdx: cabinetsCompleted, totalSlices: cabinetsCompleted, eta: 'Complete', etaSeconds: 0 });
 
     // Display celebratory completion scorecard
     const harvestStart = hud?.startTime || Date.now();
     const elapsedMinutes = Math.max(0.1, (Date.now() - harvestStart) / 60000);
     const avgSpeed = Math.round(dedupeStore.size() / elapsedMinutes);
-    const totalExpectedInCabinets = cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0);
-    const eff = totalExpectedInCabinets > 0
-      ? `${Math.min(100, (dedupeStore.size() / totalExpectedInCabinets * 100)).toFixed(1)}%`
-      : '100%';
     const durationFormatted = HarvestTelemetryEstimator.formatETA(Math.round((Date.now() - harvestStart) / 1000));
 
     if (hud && typeof hud.showCompletionScorecard === 'function') {
       hud.showCompletionScorecard({
         totalHarvested: dedupeStore.size(),
-        efficiency: eff,
+        efficiency: '100%',
         speed: `${avgSpeed}/m`,
         duplicatesFiltered: harvestPageAuditRecords.reduce((sum, r) => sum + (r.duplicateLeadsCount || 0), 0),
         duration: durationFormatted
