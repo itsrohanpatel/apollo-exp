@@ -339,6 +339,7 @@
     }
 
     const telemetry = new HarvestTelemetryEstimator({
+      defaultLatencyMs: 4500,
       defaultPacingMs: 2500,
       cooldownEveryN: 10,
       cooldownDurationMs: 45000,
@@ -361,7 +362,7 @@
     const initialRemPages = getEstimatedRemainingPages(0, 0, false);
     let currentEtaSeconds = telemetry.estimateRemainingSeconds(initialRemPages, totalSlices);
     let currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
-    let currentLatencyMs = 400;
+    let currentLatencyMs = 4500;
     let currentIsSpike = false;
 
     hud.updateProgress({
@@ -430,6 +431,7 @@
       }, '*');
 
       let pass1Done = false;
+      let pass1Exhausted = false;
       for (let page = 1; page <= 5; page++) {
         if (harvestAbort || dedupeStore.size() >= targetLeadLimit) break;
         while (isPaused && !harvestAbort) await new Promise(r => setTimeout(r, 500));
@@ -569,6 +571,10 @@
         }
 
         const rawPeople = data.people || [];
+        if (rawPeople.length < 30) {
+          pass1Exhausted = true;
+        }
+
         const people = (typeof maxEmployees === 'number' && maxEmployees > 0)
           ? rawPeople.filter(person => {
               const emp = person.organization?.estimated_num_employees
@@ -578,6 +584,8 @@
               return !(typeof emp === 'number' && emp > maxEmployees);
             })
           : rawPeople;
+
+        const outOfBoundsCount = Math.max(0, rawPeople.length - people.length);
 
         let addedInPage = 0;
         for (const person of people) {
@@ -612,6 +620,7 @@
           rawLeadsCount: rawPeople.length,
           freshLeadsCount: addedInPage,
           duplicateLeadsCount: Math.max(0, people.length - addedInPage),
+          outOfBoundsCount,
           sliceCumulative: sliceHarvested,
           globalCumulative: dedupeStore.size(),
           latencyMs: reqLatencyMs1,
@@ -660,7 +669,7 @@
 
       // --- DUAL-SORT CAPACITY BOOST (Pass 2: Z-A) ---
       const hasUncollectedLeads = sliceTotal === null || sliceHarvested < sliceTotal;
-      const shouldRunPass2 = hasUncollectedLeads && (cabinet.mode === 'Bidirectional' || sliceHarvested >= 30 || (sliceTotal !== null && sliceTotal > 30));
+      const shouldRunPass2 = !pass1Exhausted && hasUncollectedLeads && (cabinet.mode === 'Bidirectional' || sliceHarvested >= 30 || (sliceTotal !== null && sliceTotal > 30));
       if (!harvestAbort && shouldRunPass2 && dedupeStore.size() < targetLeadLimit) {
         hud.setStatus(`⚡ Capacity Boost: Executing Pass 2 (Z-A) for [${sliceLabel}]...`);
         hud.updateProgress({
@@ -742,6 +751,8 @@
               })
             : rawPeople;
 
+          const outOfBoundsCount = Math.max(0, rawPeople.length - people.length);
+
           let addedInPage = 0;
           for (const person of people) {
             if (dedupeStore.add(person)) {
@@ -775,6 +786,7 @@
             rawLeadsCount: rawPeople.length,
             freshLeadsCount: addedInPage,
             duplicateLeadsCount: Math.max(0, people.length - addedInPage),
+            outOfBoundsCount,
             sliceCumulative: sliceHarvested,
             globalCumulative: dedupeStore.size(),
             latencyMs: reqLatencyMs2,

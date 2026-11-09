@@ -9,6 +9,8 @@ export const MAX_STANDARD_PAGES = 5;
 export const MAX_TOP_DOWN_LEADS = APOLLO_PAGE_SIZE * MAX_STANDARD_PAGES; // 150
 export const MAX_BIDIRECTIONAL_PAGES = 10;
 export const MAX_BIDIRECTIONAL_LEADS = APOLLO_PAGE_SIZE * MAX_BIDIRECTIONAL_PAGES; // 300
+export const MAX_MULTI_INTEGER_RANGE_LEADS = 240; // Safe threshold for multi-number brackets to prevent sweep collisions
+export const ESTIMATED_SECONDS_PER_PAGE = 7; // Empirical real-world average: 4.74s latency + 2.07s dwell delay
 
 export const UNIVERSAL_PRIMARY_HEADCOUNT_BRACKETS = [
   ['1,10'],
@@ -1167,7 +1169,7 @@ export class SmartBatcher {
         action: 'EXECUTE_BIDIRECTIONAL',
         bracket: [`${min},${max}`],
         total: totalEntries,
-        pagesNeeded: Math.ceil(totalEntries / 25)
+        pagesNeeded: Math.ceil(totalEntries / APOLLO_PAGE_SIZE)
       };
     }
     if (min < max) {
@@ -1550,7 +1552,7 @@ export class DynamicBisectionTree {
         bracket: [`${min},${max}`],
         action: 'EXECUTE_BIDIRECTIONAL',
         skipBroadSweep: false,
-        pagesNeeded: Math.ceil(total / 25)
+        pagesNeeded: Math.ceil(total / APOLLO_PAGE_SIZE)
       }];
     }
 
@@ -2832,6 +2834,7 @@ export function computeRollingVelocity(history = [], now = Date.now(), windowMs 
 // 21. Mission Control HUD & Telemetry: Adaptive Harvest Telemetry Estimator
 export class HarvestTelemetryEstimator {
   constructor(options = {}) {
+    this.defaultLatencyMs = typeof options.defaultLatencyMs === 'number' ? options.defaultLatencyMs : 400;
     this.defaultPacingMs = options.defaultPacingMs || 2500;
     this.cooldownEveryN = options.cooldownEveryN || 10;
     this.cooldownDurationMs = options.cooldownDurationMs || 45000;
@@ -2862,7 +2865,7 @@ export class HarvestTelemetryEstimator {
   }
 
   getAverageLatencyMs() {
-    if (this.latencySamples.length === 0) return 400; // Baseline Cloudflare/Apollo RTT default
+    if (this.latencySamples.length === 0) return this.defaultLatencyMs; // Baseline Cloudflare/Apollo RTT default
     const sum = this.latencySamples.reduce((a, b) => a + b, 0);
     return Math.round(sum / this.latencySamples.length);
   }
@@ -3176,6 +3179,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
 
   const maxLimit = options.maxLeadsPerCabinet !== undefined ? options.maxLeadsPerCabinet : MAX_TOP_DOWN_LEADS;
   const bidirectionalLimit = options.maxBidirectionalLeads !== undefined ? options.maxBidirectionalLeads : MAX_BIDIRECTIONAL_LEADS;
+  const maxMultiIntegerLimit = options.maxMultiIntegerLeads !== undefined ? options.maxMultiIntegerLeads : Math.min(bidirectionalLimit, MAX_MULTI_INTEGER_RANGE_LEADS);
   const isCompanies = options.isCompanies || false;
   const onProbeProgress = options.onProbeProgress || null;
   const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : null;
@@ -3413,8 +3417,12 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       await sleepFn(delayMs);
     }
 
-    // All headcounts (both single-integer and continuous ranges) have 300-lead capacity via Bidirectional sweep
-    if (typeof count === 'number' && count <= bidirectionalLimit) {
+    // Single-integer headcounts have full 300-lead capacity via Bidirectional sweep
+    // Multi-integer continuous ranges cap at 240 leads to prevent sweep collisions across wide number brackets
+    const isSingleInteger = item.min === item.max;
+    const effectiveCeiling = isSingleInteger ? bidirectionalLimit : maxMultiIntegerLimit;
+
+    if (typeof count === 'number' && count <= effectiveCeiling) {
       const mode = count <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
       const pagesNeeded = Math.min(10, Math.ceil(count / APOLLO_PAGE_SIZE));
       logAudit({
@@ -3422,7 +3430,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         label: item.label,
         bracket: item.label,
         leadsCount: count,
-        decision: `Within safe limit (${count} <= ${bidirectionalLimit} leads). Approved as cabinet [${item.label}].`,
+        decision: `Within safe limit (${count} <= ${effectiveCeiling} leads). Approved as cabinet [${item.label}].`,
         mode,
         pagesNeeded
       });
@@ -3439,7 +3447,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       continue;
     }
 
-    // Bisect headcount whenever min < max and density exceeds bidirectionalLimit
+    // Bisect headcount whenever min < max and density exceeds effectiveCeiling
     if (item.min < item.max) {
       const mid = Math.floor((item.min + item.max) / 2);
       const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
@@ -3449,7 +3457,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         label: item.label,
         bracket: item.label,
         leadsCount: count,
-        decision: `Density ceiling exceeded (${count} > ${bidirectionalLimit} leads). Bisected range into [${left.label}] and [${right.label}].`
+        decision: `Density ceiling exceeded (${count} > ${effectiveCeiling} leads). Bisected range into [${left.label}] and [${right.label}].`
       });
       queue.unshift(right);
       queue.unshift(left);
@@ -3495,7 +3503,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         queue.unshift(right);
         queue.unshift(left);
       } else {
-        const pagesNeeded = Math.min(10, Math.ceil(count / 25));
+        const pagesNeeded = Math.min(10, Math.ceil(count / APOLLO_PAGE_SIZE));
         logAudit({
           type: 'COMPANY_DENSE_CABINET',
           label: item.label,
@@ -3826,8 +3834,9 @@ export function buildPreflightPlanCSV(cabinets = [], auditLog = [], options = {}
   rows.push(headers.join(','));
 
   // 1. Executive Summary Row
+  const secondsPerPage = typeof options.secondsPerPage === 'number' ? options.secondsPerPage : ESTIMATED_SECONDS_PER_PAGE;
   const totalPages = Array.isArray(cabinets) ? cabinets.reduce((sum, c) => sum + (c.pagesNeeded || 5), 0) : 0;
-  const totalDuration = totalPages * 3;
+  const totalDuration = totalPages * secondsPerPage;
   const summaryRow = [
     'SUMMARY',
     '0',
@@ -3863,7 +3872,7 @@ export function buildPreflightPlanCSV(cabinets = [], auditLog = [], options = {}
         item.decision || '',
         item.mode || 'Probing',
         item.pagesNeeded !== null && item.pagesNeeded !== undefined ? item.pagesNeeded : '',
-        item.pagesNeeded ? item.pagesNeeded * 3 : '',
+        item.pagesNeeded ? item.pagesNeeded * secondsPerPage : '',
         item.hash || '',
         item.timestamp || new Date().toISOString()
       ];
@@ -3882,7 +3891,7 @@ export function buildPreflightPlanCSV(cabinets = [], auditLog = [], options = {}
       const leadsStr = typeof c.total === 'number' ? c.total : (c.total || 'Dynamic');
       const modeStr = c.mode || (typeof c.total === 'number' && c.total <= maxLimit ? 'Top-Down Only' : 'Bidirectional');
       const pagesNeeded = c.pagesNeeded || (typeof c.total === 'number' ? Math.min(10, Math.ceil(c.total / APOLLO_PAGE_SIZE)) : 5);
-      const estSec = pagesNeeded * 3;
+      const estSec = pagesNeeded * secondsPerPage;
       const sliceHash = typeof buildHashForSlice === 'function' ? buildHashForSlice(currentHash, c, 'sanitized_organization_name_unanalyzed', true) : currentHash;
 
       const cabinetRow = [
@@ -3998,6 +4007,7 @@ export function buildHarvestAuditCSV(records = [], summaryStats = {}) {
     'Page_Raw_Leads',
     'Net_Fresh_Leads_Added',
     'Duplicate_Leads_Skipped',
+    'Out_Of_Bounds_Skipped',
     'Cabinet_Cumulative_Leads',
     'Global_Total_Leads_Harvested',
     'Request_Latency_Ms',
@@ -4016,6 +4026,7 @@ export function buildHarvestAuditCSV(records = [], summaryStats = {}) {
     ? summaryStats.totalHarvested
     : validRecords.reduce((sum, r) => sum + (typeof r.freshLeadsCount === 'number' ? r.freshLeadsCount : 0), 0);
   const totalDuplicates = validRecords.reduce((sum, r) => sum + (typeof r.duplicateLeadsCount === 'number' ? r.duplicateLeadsCount : 0), 0);
+  const totalOutOfBounds = validRecords.reduce((sum, r) => sum + (typeof r.outOfBoundsCount === 'number' ? r.outOfBoundsCount : 0), 0);
   const totalCabinets = typeof summaryStats.totalCabinets === 'number'
     ? summaryStats.totalCabinets
     : new Set(validRecords.map(r => r.sliceIdx)).size;
@@ -4036,6 +4047,7 @@ export function buildHarvestAuditCSV(records = [], summaryStats = {}) {
     totalRawLeads,
     totalFreshLeads,
     totalDuplicates,
+    totalOutOfBounds,
     totalFreshLeads,
     totalFreshLeads,
     validRecords.length > 0 ? Math.round(validRecords.reduce((sum, r) => sum + (r.latencyMs || 0), 0) / validRecords.length) : 0,
@@ -4062,6 +4074,7 @@ export function buildHarvestAuditCSV(records = [], summaryStats = {}) {
       r.rawLeadsCount !== undefined ? r.rawLeadsCount : 0,
       r.freshLeadsCount !== undefined ? r.freshLeadsCount : 0,
       r.duplicateLeadsCount !== undefined ? r.duplicateLeadsCount : 0,
+      r.outOfBoundsCount !== undefined ? r.outOfBoundsCount : 0,
       r.sliceCumulative !== undefined ? r.sliceCumulative : 0,
       r.globalCumulative !== undefined ? r.globalCumulative : 0,
       r.latencyMs !== undefined ? r.latencyMs : '',
