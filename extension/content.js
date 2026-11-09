@@ -198,6 +198,15 @@
         onStopAndExport: () => {
           harvestAbort = true;
           exportCollectedLeads();
+        },
+        onExportPreflightPlan: () => {
+          exportPreflightPlanCSV();
+        },
+        onExportHarvestAudit: () => {
+          exportHarvestAuditCSV();
+        },
+        onExportCompanyCSV: () => {
+          exportCompanyCSV();
         }
       });
     }
@@ -368,10 +377,16 @@
     // --- INTERACTIVE REVIEW GATE ---
     // Pause execution, present plan metrics, and wait for operator confirmation to start live harvest
     if (hud && typeof hud.setPreflightReviewReady === 'function') {
+      const totalExpectedLeads = cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0);
+      const bisectionCount = preflightAuditLog.filter(p => p.type === 'BISECTION_SPLIT').length;
+
       await new Promise((resolveStart) => {
         hud.setPreflightReviewReady({
           totalSlices,
+          totalLeads: totalExpectedLeads,
           currentEtaSeconds,
+          bisectionCount,
+          sliceList: cabinets,
           onStart: () => resolveStart(),
           onExportCSV: () => exportPreflightPlanCSV()
         });
@@ -629,6 +644,9 @@
 
         if (exitDecision1.shouldExit) {
           pass1Done = true;
+          if (hud && typeof hud.flashEarlyExit === 'function') {
+            hud.flashEarlyExit(exitDecision1.status === 'EARLY_EXIT_CABINET_COMPLETE' ? 'Target Reached (Cabinet Complete)' : 'Sweep Convergence');
+          }
           break;
         }
 
@@ -786,7 +804,12 @@
             });
           }
 
-          if (exitDecision2.shouldExit) break;
+          if (exitDecision2.shouldExit) {
+            if (hud && typeof hud.flashEarlyExit === 'function') {
+              hud.flashEarlyExit(exitDecision2.status === 'EARLY_EXIT_SWEEP_CONVERGENCE' ? 'Sweep Converged (All Seen)' : 'Zero Fresh Leads');
+            }
+            break;
+          }
 
           await sleepWithCountdown(delay);
         }
@@ -800,6 +823,26 @@
     hud.setStatus(`✅ Harvest Finished! Captured ${dedupeStore.size()} unique leads.`);
     hud.updateProgress({ passLabel: 'Completed', sliceIdx: totalSlices, totalSlices, eta: 'Complete', etaSeconds: 0 });
 
+    // Display celebratory completion scorecard
+    const harvestStart = hud?.startTime || Date.now();
+    const elapsedMinutes = Math.max(0.1, (Date.now() - harvestStart) / 60000);
+    const avgSpeed = Math.round(dedupeStore.size() / elapsedMinutes);
+    const totalExpectedInCabinets = cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0);
+    const eff = totalExpectedInCabinets > 0
+      ? `${Math.min(100, (dedupeStore.size() / totalExpectedInCabinets * 100)).toFixed(1)}%`
+      : '100%';
+    const durationFormatted = HarvestTelemetryEstimator.formatETA(Math.round((Date.now() - harvestStart) / 1000));
+
+    if (hud && typeof hud.showCompletionScorecard === 'function') {
+      hud.showCompletionScorecard({
+        totalHarvested: dedupeStore.size(),
+        efficiency: eff,
+        speed: `${avgSpeed}/m`,
+        duplicatesFiltered: harvestPageAuditRecords.reduce((sum, r) => sum + (r.duplicateLeadsCount || 0), 0),
+        duration: durationFormatted
+      });
+    }
+
     // Auto-trigger export of both leads and page audit CSV
     exportCollectedLeads();
     exportHarvestAuditCSV();
@@ -808,12 +851,36 @@
   async function sleepWithCountdown(ms) {
     const totalSec = Math.ceil(ms / 1000);
     for (let s = totalSec; s >= 0; s--) {
-      if (hud) hud.setPacingTimer(s);
+      if (hud) hud.setPacingTimer(s, totalSec);
       await new Promise(r => setTimeout(r, Math.min(ms, 1000)));
       ms -= 1000;
       if (ms <= 0) break;
     }
-    if (hud) hud.setPacingTimer(0);
+    if (hud) hud.setPacingTimer(0, totalSec);
+  }
+
+  function exportCompanyCSV() {
+    const allLeads = dedupeStore.getAll();
+    const orgMap = new Map();
+    for (const lead of allLeads) {
+      const org = lead.organization;
+      if (org && (org.id || org.name)) {
+        const key = org.id || org.name;
+        if (!orgMap.has(key)) orgMap.set(key, org);
+      }
+    }
+    const companies = Array.from(orgMap.values());
+    if (companies.length === 0) {
+      alert('No company records found in collected leads.');
+      return;
+    }
+    const normalized = companies.map(c => typeof normalizeCompanyComprehensive === 'function' ? normalizeCompanyComprehensive(c) : c);
+    const csvContent = buildChunkedUnionCSV(normalized, PREFERRED_COMPANY_COLUMNS);
+    chrome.runtime.sendMessage({
+      type: 'APOLLO_DOWNLOAD_CSV',
+      csv: csvContent,
+      filename: `apollo_companies_${companies.length}_${Date.now()}.csv`
+    });
   }
 
   function exportCollectedLeads() {
