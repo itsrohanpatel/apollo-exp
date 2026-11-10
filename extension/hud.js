@@ -8,7 +8,6 @@
 export class ApolloHUD {
   constructor(options = {}) {
     this.onStart = options.onStart || null;
-    this.onStartAudit = options.onStartAudit || null;
     this.onPause = options.onPause || null;
     this.onResume = options.onResume || null;
     this.onSkip = options.onSkip || null;
@@ -184,7 +183,6 @@ export class ApolloHUD {
         <!-- Controls Action Row -->
         <div class="apollo-hud-controls" id="apollo-hud-controls-row">
           <button class="apollo-hud-btn apollo-hud-btn-primary" id="apollo-hud-start-btn">🚀 Start AI Harvest</button>
-          <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-audit-run-btn" title="Run Preflight Density Audit (Dry-Run)">🔍 Audit Plan</button>
           <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-drawer-btn" style="display: none;" title="Inspect Preflight Architecture">📋 Inspect Plan</button>
           <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-plan-btn" style="display: none;" title="Download Preflight Check CSV">📥 Plan CSV</button>
           <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-audit-btn" style="display: none;" title="Download Page Audit CSV">📊 Page Audit</button>
@@ -388,7 +386,6 @@ export class ApolloHUD {
     const minBtn = this.container.querySelector('#apollo-hud-min-btn');
     const closeBtn = this.container.querySelector('#apollo-hud-close-btn');
     const startBtn = this.container.querySelector('#apollo-hud-start-btn');
-    const auditRunBtn = this.container.querySelector('#apollo-hud-audit-run-btn');
     const pauseBtn = this.container.querySelector('#apollo-hud-pause-btn');
     const stopBtn = this.container.querySelector('#apollo-hud-stop-btn');
     const planBtn = this.container.querySelector('#apollo-hud-plan-btn');
@@ -416,14 +413,6 @@ export class ApolloHUD {
           fn();
         } else if (this.onStart) {
           this.onStart();
-        }
-      });
-    }
-
-    if (auditRunBtn) {
-      auditRunBtn.addEventListener('click', () => {
-        if (this.onStartAudit) {
-          this.onStartAudit();
         }
       });
     }
@@ -507,14 +496,11 @@ export class ApolloHUD {
     if (typeof onExportCSV === 'function') this.onExportPreflightPlan = onExportCSV;
 
     const startBtn = this.container.querySelector('#apollo-hud-start-btn');
-    const auditRunBtn = this.container.querySelector('#apollo-hud-audit-run-btn');
     const pauseBtn = this.container.querySelector('#apollo-hud-pause-btn');
     const stopBtn = this.container.querySelector('#apollo-hud-stop-btn');
     const planBtn = this.container.querySelector('#apollo-hud-plan-btn');
     const drawerBtn = this.container.querySelector('#apollo-hud-drawer-btn');
     const drawer = this.container.querySelector('#apollo-hud-review-drawer');
-
-    if (auditRunBtn) auditRunBtn.style.display = 'none';
 
     if (startBtn) {
       startBtn.style.display = 'flex';
@@ -605,22 +591,13 @@ export class ApolloHUD {
       sliceTotal = 0,
       sliceIdx = 1,
       totalSlices = 1,
-      queueRemaining,
-      cabinetsCompleted,
-      cabinetsSubdivided,
       statusText,
       earlyExitReason
     } = data;
 
     if (sliceLabel) {
       const lblEl = this.container.querySelector('#apollo-hud-slice-lbl');
-      if (lblEl) {
-        if (typeof queueRemaining === 'number') {
-          lblEl.innerText = `[${sliceIdx}/${totalSlices} | Q:${queueRemaining}] ${sliceLabel}`;
-        } else {
-          lblEl.innerText = `[${sliceIdx}/${totalSlices}] ${sliceLabel}`;
-        }
-      }
+      if (lblEl) lblEl.innerText = `[${sliceIdx}/${totalSlices}] ${sliceLabel}`;
     }
 
     if (passLabel) {
@@ -682,14 +659,6 @@ export class ApolloHUD {
       }
     }
 
-    if (typeof queueRemaining === 'number' && !this.isPacingActive) {
-      const timerEl = this.container.querySelector('#apollo-hud-timer-val');
-      if (timerEl) {
-        timerEl.innerText = `⚡ Q: ${queueRemaining} left | ${cabinetsCompleted || 0} done | ${cabinetsSubdivided || 0} split`;
-        timerEl.style.color = '#38bdf8';
-      }
-    }
-
     if (statusText) {
       this.setStatus(statusText);
     }
@@ -697,7 +666,6 @@ export class ApolloHUD {
 
   // --- 7. Stealth Pacing Ring / Glow Countdown ---
   setPacingTimer(secondsLeft, totalPacingSec = 3) {
-    this.isPacingActive = secondsLeft > 0;
     if (secondsLeft > 0 && typeof this.remainingSeconds === 'number' && this.remainingSeconds > 0) {
       this.remainingSeconds = Math.max(0, this.remainingSeconds - 1);
     }
@@ -734,7 +702,6 @@ export class ApolloHUD {
   setHarvestState(state) {
     if (!this.container) return;
     const startBtn = this.container.querySelector('#apollo-hud-start-btn');
-    const auditRunBtn = this.container.querySelector('#apollo-hud-audit-run-btn');
     const pauseBtn = this.container.querySelector('#apollo-hud-pause-btn');
     const stopBtn = this.container.querySelector('#apollo-hud-stop-btn');
     const drawerBtn = this.container.querySelector('#apollo-hud-drawer-btn');
@@ -749,7 +716,6 @@ export class ApolloHUD {
         dot.className = 'apollo-hud-pulsing-dot dot-running';
       }
       if (startBtn) startBtn.style.display = 'none';
-      if (auditRunBtn) auditRunBtn.style.display = 'none';
       if (drawerBtn) drawerBtn.style.display = 'none';
       if (pauseBtn) {
         pauseBtn.style.display = 'flex';
@@ -795,7 +761,6 @@ export class ApolloHUD {
         startBtn.style.display = 'flex';
         startBtn.innerText = '↺ Harvest Again';
       }
-      if (auditRunBtn) auditRunBtn.style.display = 'flex';
       if (pauseBtn) pauseBtn.style.display = 'none';
       if (stopBtn) {
         stopBtn.style.display = 'flex';
@@ -817,7 +782,6 @@ export class ApolloHUD {
         startBtn.style.display = 'flex';
         startBtn.innerText = '🚀 Start AI Harvest';
       }
-      if (auditRunBtn) auditRunBtn.style.display = 'flex';
       if (pauseBtn) pauseBtn.style.display = 'none';
       if (stopBtn) stopBtn.style.display = 'none';
     }

@@ -4219,6 +4219,18 @@ export function buildHarvestAuditCSV(records = [], summaryStats = {}) {
     ? summaryStats.totalCabinets
     : new Set(validRecords.map(r => r.sliceIdx)).size;
 
+  const uniqueCabinetsTotals = new Map();
+  for (const r of validRecords) {
+    if (r.sliceIdx !== undefined && typeof r.sliceTotal === 'number' && !uniqueCabinetsTotals.has(r.sliceIdx)) {
+      uniqueCabinetsTotals.set(r.sliceIdx, r.sliceTotal);
+    }
+  }
+  const totalEstimatedLeads = typeof summaryStats.totalEstimatedLeads === 'number'
+    ? summaryStats.totalEstimatedLeads
+    : (uniqueCabinetsTotals.size > 0
+        ? Array.from(uniqueCabinetsTotals.values()).reduce((sum, v) => sum + v, 0)
+        : (validRecords.some(r => typeof r.sliceTotal === 'number') ? validRecords.find(r => typeof r.sliceTotal === 'number').sliceTotal : 'N/A'));
+
   // 1. Executive Summary Row
   const summaryRow = [
     'SUMMARY',
@@ -4231,7 +4243,7 @@ export function buildHarvestAuditCSV(records = [], summaryStats = {}) {
     'Bidirectional Multi-Pass',
     'Company Ascending & Descending',
     `Total Pages: ${totalPagesScraped}`,
-    validRecords.reduce((sum, r) => sum + (typeof r.sliceTotal === 'number' ? r.sliceTotal : 0), 0) || 'N/A',
+    totalEstimatedLeads,
     totalRawLeads,
     totalFreshLeads,
     totalDuplicates,
