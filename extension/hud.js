@@ -1,7 +1,7 @@
 /**
  * Apollo Scraper - Mission Control HUD Component
  * Production Cyber-Clean Glassmorphic In-Page Floating Cockpit
- * Features: Fluid Drag & Corner Snapping, Preflight Review Drawer, Live Telemetry with Tabular Numbers,
+ * Features: Fluid Drag & Corner Snapping, Live Telemetry with Tabular Numbers,
  * Dual-Pass State Badging, Early-Exit Flash Pill, Completion Scorecard, Web Audio Chime, and Hotkeys.
  */
 
@@ -12,12 +12,12 @@ export class ApolloHUD {
     this.onResume = options.onResume || null;
     this.onSkip = options.onSkip || null;
     this.onStopAndExport = options.onStopAndExport || null;
-    this.onExportPreflightPlan = options.onExportPreflightPlan || null;
-    this.onExportHarvestAudit = options.onExportHarvestAudit || null;
     this.onExportCompanyCSV = options.onExportCompanyCSV || null;
-    this.onCancelPreflight = options.onCancelPreflight || null;
+    this.onEngineModeChange = options.onEngineModeChange || null;
+    this.onExportDiagnostics = options.onExportDiagnostics || null;
 
-    this.currentPhase = 'idle'; // 'idle' | 'preflight' | 'review' | 'harvest'
+    this.engineMode = options.engineMode || 'turbo'; // 'turbo' | 'standard'
+    this.currentPhase = 'idle'; // 'idle' | 'harvest'
     this.statusText = '';
     this.isPaused = false;
     this.isMinimized = false;
@@ -26,10 +26,6 @@ export class ApolloHUD {
     this.remainingSeconds = null;
     this.timerInterval = null;
     this.container = null;
-
-    // Preflight cache
-    this.preflightData = null;
-    this.onConfirmStart = null;
 
     // Draggable state
     this.isDragging = false;
@@ -58,6 +54,10 @@ export class ApolloHUD {
           <span class="apollo-hud-mini-stat" id="apollo-hud-mini-stat" style="display: none;">0 leads</span>
         </div>
         <div class="apollo-hud-actions">
+          <div class="apollo-hud-mode-toggle" id="apollo-hud-mode-toggle" title="Switch Engine Mode">
+            <button class="apollo-hud-mode-btn active" id="apollo-hud-turbo-btn" data-mode="turbo" title="Direct In-Page API Engine (~5x Speed)">⚡ Turbo</button>
+            <button class="apollo-hud-mode-btn" id="apollo-hud-standard-btn" data-mode="standard" title="Authentic DOM Navigation Engine (Legacy Safe)">🛡️ Std</button>
+          </div>
           <button class="apollo-hud-btn-icon" id="apollo-hud-min-btn" title="Minimize / Restore (Esc)">−</button>
           <button class="apollo-hud-btn-icon" id="apollo-hud-close-btn" title="Close HUD">✕</button>
         </div>
@@ -71,6 +71,7 @@ export class ApolloHUD {
           <div class="apollo-hud-banner-badges">
             <div class="apollo-hud-pass-badge" id="apollo-hud-pass-bdg">Ready</div>
             <div class="apollo-hud-flash-pill" id="apollo-hud-flash-pill" style="display: none;"></div>
+            <div class="apollo-hud-diag-badge" id="apollo-hud-diag-badge" style="display: none;" title="Discrepancies detected! Click to download diagnostic report">⚠️ 0 Discrepancies</div>
           </div>
         </div>
 
@@ -106,41 +107,13 @@ export class ApolloHUD {
         <!-- Telemetry Meta Row -->
         <div class="apollo-hud-meta-row">
           <span class="apollo-hud-meta-item" id="apollo-hud-timer-val">🛡️ Stealth Active</span>
+          <span class="apollo-hud-meta-item" id="apollo-hud-engine-lbl">⚡ Turbo Engine (~1s/p)</span>
           <span class="apollo-hud-meta-item" id="apollo-hud-latency-val">🌐 Latency: ~400ms</span>
         </div>
 
         <!-- Status Line -->
         <div class="apollo-hud-status-line" id="apollo-hud-status-txt">
           <span>🛡️ Anti-Ban Engine Online</span>
-        </div>
-
-        <!-- Preflight Review Drawer (Expandable) -->
-        <div class="apollo-hud-drawer" id="apollo-hud-review-drawer" style="display: none;">
-          <div class="apollo-hud-drawer-header">
-            <span>📋 Preflight Architecture Audit</span>
-            <span class="apollo-hud-drawer-toggle" id="apollo-hud-drawer-close">✕</span>
-          </div>
-          <div class="apollo-hud-drawer-grid">
-            <div class="apollo-hud-drawer-card">
-              <span class="apollo-hud-drawer-num" id="apollo-drawer-cabinets">0</span>
-              <span class="apollo-hud-drawer-lbl">Cabinets</span>
-            </div>
-            <div class="apollo-hud-drawer-card">
-              <span class="apollo-hud-drawer-num" id="apollo-drawer-leads">0</span>
-              <span class="apollo-hud-drawer-lbl">Expected Leads</span>
-            </div>
-            <div class="apollo-hud-drawer-card">
-              <span class="apollo-hud-drawer-num" id="apollo-drawer-time">--:--</span>
-              <span class="apollo-hud-drawer-lbl">Est. Duration</span>
-            </div>
-            <div class="apollo-hud-drawer-card">
-              <span class="apollo-hud-drawer-num" id="apollo-drawer-splits">0</span>
-              <span class="apollo-hud-drawer-lbl">Bisections</span>
-            </div>
-          </div>
-          <div class="apollo-hud-drawer-list" id="apollo-drawer-slice-list">
-            <!-- Slices injected here -->
-          </div>
         </div>
 
         <!-- Completion Scorecard Overlay -->
@@ -173,7 +146,6 @@ export class ApolloHUD {
           <div class="apollo-hud-scorecard-actions">
             <button class="apollo-hud-btn apollo-hud-btn-primary" id="apollo-scorecard-export-btn">⬇ Download 28-Col Outreach CSV</button>
             <div class="apollo-hud-scorecard-subactions">
-              <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-scorecard-audit-btn">📊 Page Audit</button>
               <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-scorecard-company-btn">🏢 Companies</button>
               <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-scorecard-copy-btn">📋 Copy Stats</button>
             </div>
@@ -183,11 +155,9 @@ export class ApolloHUD {
         <!-- Controls Action Row -->
         <div class="apollo-hud-controls" id="apollo-hud-controls-row">
           <button class="apollo-hud-btn apollo-hud-btn-primary" id="apollo-hud-start-btn">🚀 Start AI Harvest</button>
-          <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-drawer-btn" style="display: none;" title="Inspect Preflight Architecture">📋 Inspect Plan</button>
-          <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-plan-btn" style="display: none;" title="Download Preflight Check CSV">📥 Plan CSV</button>
-          <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-audit-btn" style="display: none;" title="Download Page Audit CSV">📊 Page Audit</button>
           <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-pause-btn" style="display: none;">⏸ Pause</button>
           <button class="apollo-hud-btn apollo-hud-btn-danger" id="apollo-hud-stop-btn" style="display: none;">⬇ Stop & Export</button>
+          <button class="apollo-hud-btn apollo-hud-btn-secondary" id="apollo-hud-diag-btn" title="Download diagnostic report log">🐞 Diag</button>
         </div>
       </div>
     `;
@@ -205,6 +175,7 @@ export class ApolloHUD {
 
     this.restorePosition();
     this.bindEvents();
+    this.setEngineMode(this.engineMode);
     this.initDragPhysics();
   }
 
@@ -311,10 +282,21 @@ export class ApolloHUD {
       const saved = localStorage.getItem('apollo_hud_position');
       if (saved) {
         const pos = JSON.parse(saved);
-        if (pos.top !== undefined) this.container.style.top = `${pos.top}px`;
-        if (pos.bottom !== undefined) this.container.style.bottom = `${pos.bottom}px`;
-        if (pos.left !== undefined) this.container.style.left = `${pos.left}px`;
-        if (pos.right !== undefined) this.container.style.right = `${pos.right}px`;
+        if (pos.top !== undefined) {
+          this.container.style.top = `${pos.top}px`;
+          this.container.style.bottom = 'auto';
+        } else if (pos.bottom !== undefined) {
+          this.container.style.bottom = `${pos.bottom}px`;
+          this.container.style.top = 'auto';
+        }
+
+        if (pos.left !== undefined) {
+          this.container.style.left = `${pos.left}px`;
+          this.container.style.right = 'auto';
+        } else if (pos.right !== undefined) {
+          this.container.style.right = `${pos.right}px`;
+          this.container.style.left = 'auto';
+        }
       }
     } catch (e) {}
   }
@@ -360,21 +342,43 @@ export class ApolloHUD {
     this.currentPhase = phase;
   }
 
+  setEngineMode(mode = 'turbo') {
+    this.engineMode = mode === 'standard' ? 'standard' : 'turbo';
+    const turboBtn = this.container?.querySelector('#apollo-hud-turbo-btn');
+    const standardBtn = this.container?.querySelector('#apollo-hud-standard-btn');
+    const engineLbl = this.container?.querySelector('#apollo-hud-engine-lbl');
+
+    if (turboBtn && standardBtn) {
+      if (this.engineMode === 'turbo') {
+        turboBtn.classList.add('active');
+        standardBtn.classList.remove('active');
+        if (engineLbl) engineLbl.innerText = '⚡ Turbo Engine (~1s/p)';
+      } else {
+        standardBtn.classList.add('active');
+        turboBtn.classList.remove('active');
+        if (engineLbl) engineLbl.innerText = '🛡️ Standard Engine (~4.7s/p)';
+      }
+    }
+    if (typeof this.onEngineModeChange === 'function') {
+      this.onEngineModeChange(this.engineMode);
+    }
+  }
+
   togglePause() {
     const pauseBtn = this.container?.querySelector('#apollo-hud-pause-btn');
     if (this.container && (!pauseBtn || pauseBtn.style.display === 'none')) return;
     this.isPaused = !this.isPaused;
     if (this.isPaused) {
       this.setHarvestState('paused');
-      const pauseMsg = this.currentPhase === 'preflight'
-        ? '⏸ Preflight Probing paused by operator'
+      const pauseMsg = this.currentPhase === 'probing'
+        ? '⏸ Density Probing paused by operator'
         : '⏸ Harvest paused by operator';
       this.setStatus(pauseMsg);
       if (this.onPause) this.onPause();
     } else {
       this.setHarvestState('running');
-      const resumeMsg = this.currentPhase === 'preflight'
-        ? '▶ Resuming Preflight Probing...'
+      const resumeMsg = this.currentPhase === 'probing'
+        ? '▶ Resuming Density Probing...'
         : '▶ Resuming harvest...';
       this.setStatus(resumeMsg);
       if (this.onResume) this.onResume();
@@ -388,10 +392,22 @@ export class ApolloHUD {
     const startBtn = this.container.querySelector('#apollo-hud-start-btn');
     const pauseBtn = this.container.querySelector('#apollo-hud-pause-btn');
     const stopBtn = this.container.querySelector('#apollo-hud-stop-btn');
-    const planBtn = this.container.querySelector('#apollo-hud-plan-btn');
-    const auditBtn = this.container.querySelector('#apollo-hud-audit-btn');
-    const drawerBtn = this.container.querySelector('#apollo-hud-drawer-btn');
-    const drawerClose = this.container.querySelector('#apollo-hud-drawer-close');
+    const turboBtn = this.container.querySelector('#apollo-hud-turbo-btn');
+    const standardBtn = this.container.querySelector('#apollo-hud-standard-btn');
+
+    if (turboBtn) {
+      turboBtn.addEventListener('click', () => {
+        if (this.isHarvesting) return;
+        this.setEngineMode('turbo');
+      });
+    }
+
+    if (standardBtn) {
+      standardBtn.addEventListener('click', () => {
+        if (this.isHarvesting) return;
+        this.setEngineMode('standard');
+      });
+    }
 
     if (minBtn) minBtn.addEventListener('click', () => this.toggleMinimize());
     if (closeBtn) closeBtn.addEventListener('click', () => this.destroy());
@@ -406,14 +422,7 @@ export class ApolloHUD {
 
     if (startBtn) {
       startBtn.addEventListener('click', () => {
-        if (typeof this.onConfirmStart === 'function') {
-          const fn = this.onConfirmStart;
-          this.onConfirmStart = null;
-          this.closeDrawer();
-          fn();
-        } else if (this.onStart) {
-          this.onStart();
-        }
+        if (this.onStart) this.onStart();
       });
     }
 
@@ -421,22 +430,6 @@ export class ApolloHUD {
 
     if (stopBtn) {
       stopBtn.addEventListener('click', () => {
-        if (this.currentPhase === 'review') {
-          if (typeof confirm !== 'function' || confirm('Cancel harvest and return to idle?')) {
-            this.setHarvestState('idle');
-            this.setStatus('Harvest cancelled by operator.');
-            if (this.onCancelPreflight) this.onCancelPreflight();
-          }
-          return;
-        }
-        if (this.currentPhase === 'preflight') {
-          if (typeof confirm !== 'function' || confirm('Stop preflight probing and cancel harvest?')) {
-            this.setHarvestState('idle');
-            this.setStatus('Preflight probing cancelled by operator.');
-            if (this.onStopAndExport) this.onStopAndExport();
-          }
-          return;
-        }
         if (typeof confirm !== 'function' || confirm('Stop harvesting and export all collected leads to CSV now?')) {
           this.setStatus('Exporting CSV...');
           if (this.onStopAndExport) this.onStopAndExport();
@@ -444,115 +437,34 @@ export class ApolloHUD {
       });
     }
 
-    if (planBtn) {
-      planBtn.addEventListener('click', () => {
-        if (this.onExportPreflightPlan) this.onExportPreflightPlan();
-      });
-    }
-
-    if (auditBtn) {
-      auditBtn.addEventListener('click', () => {
-        if (this.onExportHarvestAudit) this.onExportHarvestAudit();
-      });
-    }
-
-    if (drawerBtn) {
-      drawerBtn.addEventListener('click', () => {
-        const drawer = this.container.querySelector('#apollo-hud-review-drawer');
-        if (drawer) {
-          drawer.style.display = drawer.style.display === 'none' ? 'flex' : 'none';
+    const diagBtn = this.container.querySelector('#apollo-hud-diag-btn');
+    if (diagBtn) {
+      diagBtn.addEventListener('click', () => {
+        if (typeof this.onExportDiagnostics === 'function') {
+          this.onExportDiagnostics();
         }
       });
     }
 
-    if (drawerClose) {
-      drawerClose.addEventListener('click', () => this.closeDrawer());
+    const diagBadge = this.container.querySelector('#apollo-hud-diag-badge');
+    if (diagBadge) {
+      diagBadge.addEventListener('click', () => {
+        if (typeof this.onExportDiagnostics === 'function') {
+          this.onExportDiagnostics();
+        }
+      });
     }
   }
 
-  closeDrawer() {
-    const drawer = this.container?.querySelector('#apollo-hud-review-drawer');
-    if (drawer) drawer.style.display = 'none';
-  }
-
-  // --- 4. Preflight Review Gate & Drawer ---
-  setPreflightReviewReady(data = {}) {
+  updateDiscrepancy(count = 0) {
     if (!this.container) return;
-    this.currentPhase = 'review';
-    const {
-      totalSlices = 0,
-      totalLeads = 0,
-      currentEtaSeconds = 0,
-      bisectionCount = 0,
-      sliceList = [],
-      onStart,
-      onCancel,
-      onExportCSV
-    } = data;
-
-    this.preflightData = data;
-    if (typeof onStart === 'function') this.onConfirmStart = onStart;
-    if (typeof onCancel === 'function') this.onCancelPreflight = onCancel;
-    if (typeof onExportCSV === 'function') this.onExportPreflightPlan = onExportCSV;
-
-    const startBtn = this.container.querySelector('#apollo-hud-start-btn');
-    const pauseBtn = this.container.querySelector('#apollo-hud-pause-btn');
-    const stopBtn = this.container.querySelector('#apollo-hud-stop-btn');
-    const planBtn = this.container.querySelector('#apollo-hud-plan-btn');
-    const drawerBtn = this.container.querySelector('#apollo-hud-drawer-btn');
-    const drawer = this.container.querySelector('#apollo-hud-review-drawer');
-
-    if (startBtn) {
-      startBtn.style.display = 'flex';
-      startBtn.innerText = '▶ Start Harvest';
-      startBtn.className = 'apollo-hud-btn apollo-hud-btn-primary apollo-hud-btn-glow';
-    }
-    if (planBtn) planBtn.style.display = 'flex';
-    if (drawerBtn) drawerBtn.style.display = 'flex';
-    if (pauseBtn) pauseBtn.style.display = 'none';
-    if (stopBtn) {
-      stopBtn.style.display = 'flex';
-      stopBtn.innerText = '✕ Cancel';
-    }
-
-    // Populate drawer cards
-    const dCabs = this.container.querySelector('#apollo-drawer-cabinets');
-    const dLeads = this.container.querySelector('#apollo-drawer-leads');
-    const dTime = this.container.querySelector('#apollo-drawer-time');
-    const dSplits = this.container.querySelector('#apollo-drawer-splits');
-
-    if (dCabs) dCabs.innerText = totalSlices.toLocaleString();
-    if (dLeads) dLeads.innerText = (totalLeads || '8.2k').toLocaleString();
-    if (dTime) dTime.innerText = this.formatETA(currentEtaSeconds);
-    if (dSplits) dSplits.innerText = bisectionCount || '40';
-
-    // Populate drawer slice list preview
-    const listEl = this.container.querySelector('#apollo-drawer-slice-list');
-    if (listEl && Array.isArray(sliceList) && sliceList.length > 0) {
-      listEl.innerHTML = sliceList.slice(0, 30).map((s, idx) => `
-        <div class="apollo-drawer-item">
-          <span class="apollo-drawer-item-idx">#${idx + 1}</span>
-          <span class="apollo-drawer-item-lbl">${s.label || s.bracket || 'Slice'}</span>
-          <span class="apollo-drawer-item-leads">${s.leads || s.total || 0} leads</span>
-          <span class="apollo-drawer-item-tag ${s.mode === 'Top-Down Only' ? 'top-down' : 'bidi'}">${s.mode || 'Bidi'}</span>
-        </div>
-      `).join('');
-      if (sliceList.length > 30) {
-        listEl.innerHTML += `<div style="text-align: center; font-size: 10px; color: #64748b; padding: 6px 0;">+ ${sliceList.length - 30} more cabinets scheduled in execution tree...</div>`;
-      }
-    }
-
-    // Auto open drawer for immediate inspection
-    if (drawer) drawer.style.display = 'flex';
-
-    const etaFormatted = this.formatETA(currentEtaSeconds);
-    this.setStatus(`📋 Plan Ready: ${totalSlices} cabinets designed (~${etaFormatted}). Click 'Start Harvest' to execute.`);
-    const sliceLbl = this.container.querySelector('#apollo-hud-slice-lbl');
-    if (sliceLbl) sliceLbl.innerText = `${totalSlices} Cabinets Designed & Validated`;
-    const passBdg = this.container.querySelector('#apollo-hud-pass-bdg');
-    if (passBdg) {
-      passBdg.innerText = 'Review Gate';
-      passBdg.className = 'apollo-hud-pass-badge badge-review';
+    const badge = this.container.querySelector('#apollo-hud-diag-badge');
+    if (!badge) return;
+    if (count > 0) {
+      badge.style.display = 'inline-flex';
+      badge.innerText = `⚠️ ${count} Discrepanc${count === 1 ? 'y' : 'ies'}`;
+    } else {
+      badge.style.display = 'none';
     }
   }
 
@@ -704,19 +616,16 @@ export class ApolloHUD {
     const startBtn = this.container.querySelector('#apollo-hud-start-btn');
     const pauseBtn = this.container.querySelector('#apollo-hud-pause-btn');
     const stopBtn = this.container.querySelector('#apollo-hud-stop-btn');
-    const drawerBtn = this.container.querySelector('#apollo-hud-drawer-btn');
     const dot = this.container.querySelector('#apollo-hud-dot');
 
     if (state === 'running') {
       this.isHarvesting = true;
       this.isPaused = false;
-      this.closeDrawer();
 
       if (dot) {
         dot.className = 'apollo-hud-pulsing-dot dot-running';
       }
       if (startBtn) startBtn.style.display = 'none';
-      if (drawerBtn) drawerBtn.style.display = 'none';
       if (pauseBtn) {
         pauseBtn.style.display = 'flex';
         pauseBtn.innerText = '⏸ Pause (Space)';
@@ -766,8 +675,6 @@ export class ApolloHUD {
         stopBtn.style.display = 'flex';
         stopBtn.innerText = '⬇ Export CSV';
       }
-      const auditBtn = this.container?.querySelector('#apollo-hud-audit-btn');
-      if (auditBtn) auditBtn.style.display = 'flex';
     } else {
       // idle
       this.currentPhase = 'idle';
@@ -816,18 +723,12 @@ export class ApolloHUD {
 
     // Wire action buttons
     const exportBtn = this.container.querySelector('#apollo-scorecard-export-btn');
-    const auditBtn = this.container.querySelector('#apollo-scorecard-audit-btn');
     const companyBtn = this.container.querySelector('#apollo-scorecard-company-btn');
     const copyBtn = this.container.querySelector('#apollo-scorecard-copy-btn');
 
     if (exportBtn) {
       exportBtn.onclick = () => {
         if (this.onStopAndExport) this.onStopAndExport();
-      };
-    }
-    if (auditBtn) {
-      auditBtn.onclick = () => {
-        if (this.onExportHarvestAudit) this.onExportHarvestAudit();
       };
     }
     if (companyBtn) {
@@ -911,18 +812,6 @@ export class ApolloHUD {
     if (!this.container) return;
     const txtEl = this.container.querySelector('#apollo-hud-status-txt');
     if (txtEl) txtEl.innerText = text;
-  }
-
-  setPreflightPlanReady(callback) {
-    if (typeof callback === 'function') this.onExportPreflightPlan = callback;
-    const planBtn = this.container?.querySelector('#apollo-hud-plan-btn');
-    if (planBtn) planBtn.style.display = 'flex';
-  }
-
-  setHarvestAuditReady(callback) {
-    if (typeof callback === 'function') this.onExportHarvestAudit = callback;
-    const auditBtn = this.container?.querySelector('#apollo-hud-audit-btn');
-    if (auditBtn) auditBtn.style.display = 'flex';
   }
 
   destroy() {

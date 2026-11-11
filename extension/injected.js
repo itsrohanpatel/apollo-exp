@@ -7,6 +7,7 @@
 (function () {
   console.log('[Apollo Extractor] Main-world Engine initialized.');
 
+  const nativeFetch = window.fetch.bind(window);
   let activeSortConfig = null;
 
   // 1. Transparent Network Interceptor (XHR + Fetch)
@@ -117,18 +118,74 @@
   setInterval(dismissApolloModals, 1000);
 
   // 3. Fallback DOM Extractor (If network response ever missed)
+  function captureDOMForensics() {
+    try {
+      const container = document.querySelector('[role="grid"], .zp_tableContainer, .finder-table-container, table') || document.body;
+      const scrollInfo = container ? {
+        scrollTop: container.scrollTop || window.scrollY || 0,
+        scrollHeight: container.scrollHeight || document.documentElement.scrollHeight || 0,
+        clientHeight: container.clientHeight || window.innerHeight || 0
+      } : null;
+
+      const rows = Array.from(document.querySelectorAll('[role="row"], table tbody tr, .zp_table_row, [data-cy="finder-table-row"]'));
+      const anomalyRows = [];
+
+      rows.forEach((row, idx) => {
+        const nameLink = row.querySelector('a[href*="/people/"]') || row.querySelector('.zp_name, [data-cy="finder-name"]');
+        if (!nameLink) {
+          const rawText = (row.innerText || '').trim();
+          if (rawText && !rawText.toLowerCase().includes('name') && !rawText.toLowerCase().includes('select all')) {
+            anomalyRows.push({
+              index: idx,
+              tag: row.tagName,
+              className: row.className || '',
+              textSnippet: rawText.slice(0, 150),
+              outerHTMLSnippet: (row.outerHTML || '').slice(0, 300)
+            });
+          }
+        }
+      });
+
+      return {
+        totalRowsInDOM: rows.length,
+        scrollInfo,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        anomalyRowCount: anomalyRows.length,
+        anomalyRows
+      };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
   function extractLeadsFromDOM() {
     const leads = [];
     try {
       const rows = document.querySelectorAll('[role="row"], table tbody tr, .zp_table_row, [data-cy="finder-table-row"]');
       for (const row of rows) {
-        const nameLink = row.querySelector('a[href*="/people/"]');
-        if (!nameLink) continue;
+        let nameLink = row.querySelector('a[href*="/people/"]');
+        let name = '';
+        let id = '';
 
-        const name = (nameLink.innerText || '').trim();
-        const href = nameLink.getAttribute('href') || '';
-        const idMatch = href.match(/\/people\/([a-zA-Z0-9_-]+)/);
-        const id = idMatch ? idMatch[1] : `dom_${name.replace(/\s+/g, '_')}`;
+        if (nameLink) {
+          name = (nameLink.innerText || '').trim();
+          const href = nameLink.getAttribute('href') || '';
+          const idMatch = href.match(/\/people\/([a-zA-Z0-9_-]+)/);
+          id = idMatch ? idMatch[1] : `dom_${name.replace(/\s+/g, '_')}`;
+        } else {
+          // Fallback for masked, unrevealed, or custom rendered contacts without anchor tag
+          const nameEl = row.querySelector('.zp_name, [data-cy="finder-name"], td:nth-child(2)');
+          if (nameEl) {
+            const rawName = (nameEl.innerText || '').trim();
+            if (rawName && !rawName.toLowerCase().includes('select all') && rawName.toLowerCase() !== 'name') {
+              name = rawName;
+              id = `dom_${name.replace(/\s+/g, '_')}`;
+            }
+          }
+        }
+
+        if (!name || name.toLowerCase() === 'name' || name.toLowerCase().includes('select all')) continue;
 
         const companyLink = row.querySelector('a[href*="/companies/"], a[href*="/accounts/"]');
         const companyName = companyLink ? (companyLink.innerText || '').trim() : '';
@@ -136,14 +193,12 @@
         const titleEl = row.querySelector('.zp_job_title, [class*="title"], td:nth-child(3)');
         const title = titleEl ? (titleEl.innerText || '').trim() : '';
 
-        if (name) {
-          leads.push({
-            id,
-            name,
-            title,
-            organization: { name: companyName }
-          });
-        }
+        leads.push({
+          id,
+          name,
+          title,
+          organization: { name: companyName }
+        });
       }
     } catch (e) {}
     return leads;
@@ -286,9 +341,21 @@
     // C. Command: Extract DOM fallback
     if (event.data.type === 'APOLLO_REQUEST_DOM_EXTRACTION') {
       const domLeads = extractLeadsFromDOM();
+      const forensics = captureDOMForensics();
       window.postMessage({
         type: 'APOLLO_DOM_LEADS_RESULT',
-        leads: domLeads
+        leads: domLeads,
+        forensics
+      }, '*');
+    }
+
+    // C2. Command: Capture DOM Forensics specifically
+    if (event.data.type === 'APOLLO_CAPTURE_DOM_FORENSICS') {
+      const forensics = captureDOMForensics();
+      window.postMessage({
+        type: 'APOLLO_DOM_FORENSICS_RESULT',
+        requestId: event.data.requestId,
+        forensics
       }, '*');
     }
 
@@ -305,10 +372,12 @@
       const standardUrl = isCompanySearch ? '/api/v1/mixed_companies/search' : '/api/v1/mixed_people/search';
 
       const executeProbe = (url) => {
-        return fetch(url, {
+        return nativeFetch(url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Accept': '*/*',
+            'apollographql-client-name': 'apollo-frontend',
             'X-CSRF-TOKEN': csrf
           },
           body: JSON.stringify(payload)
@@ -346,6 +415,93 @@
             success: false
           }, '*');
         });
+    }
+
+    // E. Command: Direct In-Page Search Page (Turbo Engine)
+    if (event.data.type === 'APOLLO_DIRECT_SEARCH_PAGE') {
+      const { requestId, payload, page, sort } = event.data;
+      const getCookie = (name) => {
+        const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+        return v ? v[2] : null;
+      };
+      const csrf = getCookie('X-CSRF-TOKEN') || '';
+      const isCompanySearch = (window.location.hash || '').includes('companies') || (payload && payload._entityType === 'companies');
+      const searchUrl = isCompanySearch ? '/api/v1/mixed_companies/search' : '/api/v1/mixed_people/search';
+
+      const finalPayload = {
+        ...(payload || {}),
+        page: page || 1,
+        per_page: 30
+      };
+      if (sort) {
+        activeSortConfig = sort;
+        finalPayload.sort_by_field = sort.sort_by_field;
+        finalPayload.sort_ascending = sort.sort_ascending;
+      }
+
+      nativeFetch(searchUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': '*/*',
+          'X-CSRF-TOKEN': csrf,
+          'apollographql-client-name': 'apollo-frontend'
+        },
+        body: JSON.stringify(finalPayload)
+      })
+      .then(async (response) => {
+        const remainingHdr = response.headers.get('x-rate-limit-remaining');
+        const limitHdr = response.headers.get('x-rate-limit-limit');
+        const retryAfterHdr = response.headers.get('retry-after');
+
+        const headers = {
+          remainingQuota: remainingHdr !== null ? parseInt(remainingHdr, 10) : null,
+          limitQuota: limitHdr !== null ? parseInt(limitHdr, 10) : null,
+          retryAfterSeconds: retryAfterHdr !== null ? parseInt(retryAfterHdr, 10) : null
+        };
+
+        if (!response.ok) {
+          window.postMessage({
+            type: 'APOLLO_DIRECT_SEARCH_PAGE_RESULT',
+            requestId,
+            success: false,
+            status: response.status,
+            error: `HTTP ${response.status}`,
+            headers
+          }, '*');
+          return;
+        }
+
+        const data = await response.json();
+        if (data && typeof data === 'object') {
+          const rawList = Array.isArray(data.people)
+            ? data.people
+            : (Array.isArray(data.organizations) ? data.organizations : (Array.isArray(data.accounts) ? data.accounts : null));
+
+          if (rawList && isCompanySearch) {
+            data.people = rawList.map(item => ({ ...item, _entityType: 'companies' }));
+          }
+        }
+
+        window.postMessage({
+          type: 'APOLLO_DIRECT_SEARCH_PAGE_RESULT',
+          requestId,
+          success: true,
+          status: response.status,
+          data,
+          headers
+        }, '*');
+      })
+      .catch((err) => {
+        window.postMessage({
+          type: 'APOLLO_DIRECT_SEARCH_PAGE_RESULT',
+          requestId,
+          success: false,
+          status: 0,
+          error: err.message || 'Network error',
+          headers: {}
+        }, '*');
+      });
     }
   });
 

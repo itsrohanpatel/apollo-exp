@@ -19,12 +19,14 @@
   const {
     parseApolloUrlHash,
     buildHashForSlice,
+    buildPayloadForCabinet,
     resolveAdaptiveExecutionTree,
     resolveHarvestExecutionPlan,
     resolveExecutionBrackets,
     detectMaxEmployeesFromFilters,
     subdivideCabinet,
     DeduplicationStore,
+    StandardModeDiagnosticLogger,
     generatePacingDelay,
     buildChunkedUnionCSV,
     buildChunkedCleanOutreachCSV,
@@ -34,9 +36,9 @@
     PREFERRED_COMPANY_COLUMNS,
     CLEAN_OUTREACH_COLUMNS_28,
     HarvestTelemetryEstimator,
-    buildPreflightPlanCSV,
-    buildHarvestAuditCSV,
-    shouldEarlyExitHarvest
+    shouldEarlyExitHarvest,
+    DynamicTokenBucketPacer,
+    BoundedConcurrencyPool
   } = slicerCore;
   const { ApolloHUD } = hudModule;
 
@@ -46,13 +48,16 @@
   let isHarvesting = false;
   let isPaused = false;
   let harvestAbort = false;
-  let lastPreflightPlanCSV = null;
-  let lastHarvestAuditCSV = null;
-  let harvestPageAuditRecords = [];
+  let engineMode = 'turbo'; // 'turbo' | 'standard'
+  let totalDuplicatesFiltered = 0;
   const dedupeStore = new DeduplicationStore();
+  const diagnosticLogger = new StandardModeDiagnosticLogger();
+  const pacer = new DynamicTokenBucketPacer();
+  const concurrencyPool = new BoundedConcurrencyPool(3);
 
   let activeBatchResolver = null;
   const activeProbeResolvers = new Map();
+  const activeDirectSearchResolvers = new Map();
 
   // 1. Inject Main-World Script (`injected.js`)
   function injectMainWorldScript() {
@@ -98,10 +103,53 @@
       const resolver = activeProbeResolvers.get(event.data.requestId);
       if (resolver) {
         activeProbeResolvers.delete(event.data.requestId);
-        resolver(event.data.total || 0);
+        resolver(event.data.success ? (typeof event.data.total === 'number' ? event.data.total : 0) : null);
+      }
+    }
+
+    if (event.data.type === 'APOLLO_DIRECT_SEARCH_PAGE_RESULT') {
+      const resolver = activeDirectSearchResolvers.get(event.data.requestId);
+      if (resolver) {
+        activeDirectSearchResolvers.delete(event.data.requestId);
+        resolver(event.data);
       }
     }
   });
+
+  // Restore stored engine mode
+  try {
+    chrome.storage.local.get(['apollo_engine_mode'], (res) => {
+      if (res && res.apollo_engine_mode) {
+        engineMode = res.apollo_engine_mode;
+        if (hud) hud.setEngineMode(engineMode);
+      }
+    });
+  } catch (e) {}
+
+  function fetchDirectSearchPage(payload, page = 1, sort = null, timeoutMs = 12000) {
+    return new Promise((resolve) => {
+      const requestId = 'direct_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      const timer = setTimeout(() => {
+        if (activeDirectSearchResolvers.has(requestId)) {
+          activeDirectSearchResolvers.delete(requestId);
+          resolve({ success: false, error: 'TIMEOUT', status: 0 });
+        }
+      }, timeoutMs);
+
+      activeDirectSearchResolvers.set(requestId, (res) => {
+        clearTimeout(timer);
+        resolve(res);
+      });
+
+      window.postMessage({
+        type: 'APOLLO_DIRECT_SEARCH_PAGE',
+        requestId,
+        payload,
+        page,
+        sort
+      }, '*');
+    });
+  }
 
   function waitForBatch(timeoutMs = 12000) {
     return new Promise((resolve) => {
@@ -120,21 +168,42 @@
       const handler = (e) => {
         if (e.data?.type === 'APOLLO_DOM_LEADS_RESULT') {
           window.removeEventListener('message', handler);
-          resolve(e.data.leads || []);
+          resolve({
+            leads: e.data.leads || [],
+            forensics: e.data.forensics || null
+          });
         }
       };
       window.addEventListener('message', handler);
       window.postMessage({ type: 'APOLLO_REQUEST_DOM_EXTRACTION' }, '*');
       setTimeout(() => {
         window.removeEventListener('message', handler);
-        resolve([]);
+        resolve({ leads: [], forensics: null });
       }, 1500);
+    });
+  }
+
+  function fetchDOMForensics() {
+    return new Promise((resolve) => {
+      const requestId = 'forensics_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      const handler = (e) => {
+        if (e.data?.type === 'APOLLO_DOM_FORENSICS_RESULT' && e.data.requestId === requestId) {
+          window.removeEventListener('message', handler);
+          resolve(e.data.forensics || null);
+        }
+      };
+      window.addEventListener('message', handler);
+      window.postMessage({ type: 'APOLLO_CAPTURE_DOM_FORENSICS', requestId }, '*');
+      setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve(null);
+      }, 1000);
     });
   }
 
   async function probeDensity(filters, attempt = 1) {
     while (isPaused && !harvestAbort) {
-      if (hud) hud.setStatus('⏸ Preflight Probing paused by operator');
+      if (hud) hud.setStatus('⏸ Density Probing paused by operator');
       await new Promise(r => setTimeout(r, 200));
     }
     if (harvestAbort) return null;
@@ -184,7 +253,7 @@
     });
 
     while (isPaused && !harvestAbort) {
-      if (hud) hud.setStatus('⏸ Preflight Probing paused by operator');
+      if (hud) hud.setStatus('⏸ Density Probing paused by operator');
       await new Promise(r => setTimeout(r, 200));
     }
     if (harvestAbort) return null;
@@ -202,8 +271,15 @@
   function ensureHUD() {
     if (!hud) {
       hud = new ApolloHUD({
+        engineMode,
+        onEngineModeChange: (mode) => {
+          engineMode = mode;
+          try {
+            chrome.storage.local.set({ apollo_engine_mode: mode });
+          } catch (e) {}
+        },
         onStart: () => {
-          runHarvest({ targetLeadLimit: 50000 });
+          runHarvest({ targetLeadLimit: 50000, engineMode });
         },
         onPause: () => { isPaused = true; },
         onResume: () => { isPaused = false; },
@@ -211,14 +287,11 @@
           harvestAbort = true;
           exportCollectedLeads();
         },
-        onExportPreflightPlan: () => {
-          exportPreflightPlanCSV();
-        },
-        onExportHarvestAudit: () => {
-          exportHarvestAuditCSV();
-        },
         onExportCompanyCSV: () => {
           exportCompanyCSV();
+        },
+        onExportDiagnostics: () => {
+          exportDiagnosticReport();
         }
       });
     }
@@ -231,12 +304,22 @@
     isHarvesting = true;
     harvestAbort = false;
     isPaused = false;
-    harvestPageAuditRecords = [];
+    totalDuplicatesFiltered = 0;
+    diagnosticLogger.clear();
+    if (hud) hud.updateDiscrepancy(0);
 
-    ensureHUD();
-    hud.setPhase('preflight');
-    hud.setHarvestState('running');
-    hud.setStatus('⚡ Analyzing search parameters & probing density...');
+    if (config.engineMode) {
+      engineMode = config.engineMode;
+      if (hud) hud.setEngineMode(engineMode);
+    }
+
+    try {
+      ensureHUD();
+      hud.setPhase('probing');
+      hud.setHarvestState('running');
+      hud.setStatus(engineMode === 'turbo'
+        ? '⚡ Turbo Probing search tree with concurrent worker pool...'
+        : '🔍 Probing search tree for 100% lead coverage...');
 
     // Guarantee entire search starts in authentic Company A -> Z sort order
     window.postMessage({
@@ -272,24 +355,30 @@
     } catch (e) {}
 
     let cabinets = [];
-    const preflightAuditLog = [];
     try {
-      hud.setStatus('🔍 Probing search tree for 100% lead coverage...');
-      cabinets = await resolveAdaptiveExecutionTree(probeDensity, baseFilters, {
+      const preflightStartTime = Date.now();
+      const auditLog = [];
+
+      // Concurrency ceiling of 4 for preflight metadata probing
+      const probeConcurrencyPool = new BoundedConcurrencyPool(4);
+      const activeProbeFn = (filters, attempt) => probeConcurrencyPool.run(() => probeDensity(filters, attempt));
+
+      const activeProbePacing = engineMode === 'turbo'
+        ? { minDelay: 80, maxDelay: 180, zeroMinDelay: 40, zeroMaxDelay: 80 }
+        : { minDelay: 250, maxDelay: 400, zeroMinDelay: 100, zeroMaxDelay: 200 };
+
+      const treeResult = await resolveAdaptiveExecutionTree(activeProbeFn, baseFilters, {
         maxLeadsPerCabinet: 150,
         initialTotal,
         maxEmployees,
         decomposeEnterprise: true,
-        auditLog: preflightAuditLog,
+        remainderPruning: true,
+        detailed: true,
+        auditLog,
         sleepFn: sleepWithCountdown,
         isAborted: () => harvestAbort,
         isPaused: () => isPaused,
-        probePacing: {
-          minDelay: 800,
-          maxDelay: 1600,
-          zeroMinDelay: 500,
-          zeroMaxDelay: 1000
-        },
+        probePacing: activeProbePacing,
         onProbeProgress: (p) => {
           if (isPaused) return;
           if (p.type === 'BRACKET_PROBE') {
@@ -300,18 +389,36 @@
             hud.setStatus(`🔍 Probing [${p.label}]: ${p.total} leads...`);
           } else if (p.type === 'ZERO_RESULT_DWELL') {
             hud.setStatus(`⚡ [${p.label}] has 0 leads. Stealth dwell...`);
+          } else if (p.type === 'REMAINDER_PRUNE') {
+            hud.setStatus(`⚡ Pruned tail seniorities [${p.label}] (${p.skippedCount} probes saved)...`);
           }
         }
+      });
+
+      cabinets = Array.isArray(treeResult) ? treeResult : (treeResult?.cabinets || []);
+      const probesPrunedByMath = treeResult?.probesPrunedByMath || 0;
+      const preflightDurationMs = Date.now() - preflightStartTime;
+
+      diagnosticLogger.recordPreflightTelemetry({
+        startTime: new Date(preflightStartTime).toISOString(),
+        durationMs: preflightDurationMs,
+        engineMode,
+        totalProbesExecuted: auditLog.filter(a => a.type && a.type.includes('PROBE')).length,
+        probesPrunedByMath,
+        cabinetsPlanned: cabinets.length,
+        totalPredictedLeads: cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0),
+        cabinets,
+        auditLog
       });
     } catch (e) {
       console.warn('[Apollo Extractor] Adaptive tree resolution error, falling back to macro brackets:', e);
     }
 
     if (harvestAbort) {
-      console.log('[Apollo Extractor] Preflight probing cancelled/stopped by operator.');
+      console.log('[Apollo Extractor] Density probing cancelled/stopped by operator.');
       if (hud) {
         hud.setHarvestState('idle');
-        hud.setStatus('Preflight probing cancelled by operator.');
+        hud.setStatus('Density probing cancelled by operator.');
       }
       isHarvesting = false;
       return;
@@ -343,37 +450,27 @@
 
     let totalSlices = cabinets.length;
 
-    // --- AUTO-EXPORT PREFLIGHT AUDIT & CABINET DESIGN CSV ---
-    try {
-      lastPreflightPlanCSV = buildPreflightPlanCSV(cabinets, preflightAuditLog, {
-        currentHash,
-        baseFilters,
-        initialTotal
-      });
-
-      chrome.runtime.sendMessage({
-        type: 'APOLLO_DOWNLOAD_CSV',
-        csv: lastPreflightPlanCSV,
-        filename: `apollo_preflight_plan_${totalSlices}_cabinets_${Date.now()}.csv`
-      });
-
-      if (hud && typeof hud.setPreflightPlanReady === 'function') {
-        hud.setPreflightPlanReady(() => exportPreflightPlanCSV());
-      }
-    } catch (csvErr) {
-      console.warn('[Apollo Extractor] Auto-export preflight plan error:', csvErr);
-    }
-
     const telemetry = new HarvestTelemetryEstimator({
-      defaultLatencyMs: 4500,
-      defaultPacingMs: 2500,
-      cooldownEveryN: 10,
-      cooldownDurationMs: 45000,
-      enableCooldown: true
+      engineMode,
+      defaultLatencyMs: engineMode === 'turbo' ? 350 : 1800,
+      defaultPacingMs: engineMode === 'turbo' ? 120 : 2750,
+      enableCooldown: false
     });
 
     const getEstimatedRemainingPages = (currIdx, currPage, isPass2 = false) => {
-      let rem = isPass2 ? Math.max(0, 5 - currPage) : (Math.max(0, 5 - currPage) + 4);
+      const currCab = cabinets[currIdx];
+      let remCurr = 0;
+      if (currCab) {
+        const cabTotal = (typeof currCab.total === 'number' && currCab.total > 0) ? currCab.total : null;
+        if (cabTotal !== null) {
+          const totalPagesNeeded = Math.min(10, Math.ceil(cabTotal / 30));
+          remCurr = Math.max(0, totalPagesNeeded - currPage);
+        } else {
+          remCurr = isPass2 ? Math.max(0, 5 - currPage) : (Math.max(0, 5 - currPage) + 4);
+        }
+      }
+
+      let rem = remCurr;
       for (let j = currIdx + 1; j < cabinets.length; j++) {
         const c = cabinets[j];
         if (typeof c.total === 'number' && c.total > 0) {
@@ -388,7 +485,7 @@
     const initialRemPages = getEstimatedRemainingPages(0, 0, false);
     let currentEtaSeconds = telemetry.estimateRemainingSeconds(initialRemPages, totalSlices);
     let currentEta = HarvestTelemetryEstimator.formatETA(currentEtaSeconds);
-    let currentLatencyMs = 4500;
+    let currentLatencyMs = engineMode === 'turbo' ? 350 : 1800;
     let currentIsSpike = false;
 
     hud.updateProgress({
@@ -401,49 +498,9 @@
       isLatencySpike: currentIsSpike
     });
 
-    // --- INTERACTIVE REVIEW GATE ---
-    // Pause execution, present plan metrics, and wait for operator confirmation to start live harvest
-    if (hud && typeof hud.setPreflightReviewReady === 'function') {
-      const totalExpectedLeads = cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0);
-      const bisectionCount = preflightAuditLog.filter(p => p.type === 'BISECTION_SPLIT').length;
-
-      await new Promise((resolveStart) => {
-        let reviewDone = false;
-        const finishReview = () => {
-          if (!reviewDone) {
-            reviewDone = true;
-            resolveStart();
-          }
-        };
-        hud.setPreflightReviewReady({
-          totalSlices,
-          totalLeads: totalExpectedLeads,
-          currentEtaSeconds,
-          bisectionCount,
-          sliceList: cabinets,
-          onStart: finishReview,
-          onCancel: () => {
-            harvestAbort = true;
-            finishReview();
-          },
-          onExportCSV: () => exportPreflightPlanCSV()
-        });
-      });
-
-      if (harvestAbort) {
-        console.log('[Apollo Extractor] Harvest cancelled in preflight review gate.');
-        if (hud) {
-          hud.setHarvestState('idle');
-          hud.setStatus('Harvest cancelled by operator.');
-        }
-        isHarvesting = false;
-        return;
-      }
-
-      hud.setPhase('harvest');
-      hud.setHarvestState('running');
-      hud.setStatus(`⚡ Starting live harvest across ${totalSlices} cabinets...`);
-    }
+    hud.setPhase('harvest');
+    hud.setHarvestState('running');
+    hud.setStatus(`⚡ Starting live harvest across ${totalSlices} cabinets...`);
 
     for (let i = 0; i < cabinets.length; i++) {
       if (harvestAbort || dedupeStore.size() >= targetLeadLimit) break;
@@ -501,25 +558,57 @@
           isLatencySpike: currentIsSpike
         });
 
-        const waitPromise = waitForBatch();
+        let data = null;
+        let lastHeaders1 = null;
 
-        if (page === 1) {
-          const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
-          window.postMessage({
-            type: 'APOLLO_NAVIGATE_HASH',
-            hash: newHash,
-            sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true },
-            resetPage1: true
-          }, '*');
-          window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+        if (engineMode === 'turbo') {
+          const reqStart1 = performance.now();
+          const sortParam = { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true };
+          const payload1 = buildPayloadForCabinet(baseFilters, cabinet, sortParam, page);
+          const directRes = await fetchDirectSearchPage(payload1, page, sortParam);
+          const reqLatencyMs1 = Math.round(performance.now() - reqStart1);
+          telemetry.recordRequest(reqLatencyMs1);
+
+          if (directRes && directRes.success && directRes.data) {
+            data = directRes.data;
+            lastHeaders1 = directRes.headers || null;
+          } else {
+            console.warn(`[Apollo Extractor] Turbo direct fetch failed on Pass 1 p${page} (${directRes?.error || 'Unknown'}). Falling back to standard DOM navigation...`);
+            const waitPromise = waitForBatch();
+            if (page === 1) {
+              const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
+              window.postMessage({
+                type: 'APOLLO_NAVIGATE_HASH',
+                hash: newHash,
+                sort: sortParam,
+                resetPage1: true
+              }, '*');
+              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+            } else {
+              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+            }
+            data = await waitPromise;
+          }
         } else {
-          window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
-        }
+          const waitPromise = waitForBatch();
+          if (page === 1) {
+            const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', true);
+            window.postMessage({
+              type: 'APOLLO_NAVIGATE_HASH',
+              hash: newHash,
+              sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: true },
+              resetPage1: true
+            }, '*');
+            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+          } else {
+            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+          }
 
-        const reqStart1 = performance.now();
-        let data = await waitPromise;
-        const reqLatencyMs1 = Math.round(performance.now() - reqStart1);
-        telemetry.recordRequest(reqLatencyMs1);
+          const reqStart1 = performance.now();
+          data = await waitPromise;
+          const reqLatencyMs1 = Math.round(performance.now() - reqStart1);
+          telemetry.recordRequest(reqLatencyMs1);
+        }
 
         const remPages1 = getEstimatedRemainingPages(i, page, false);
         currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages1, cabinets.length - i);
@@ -528,10 +617,15 @@
         currentLatencyMs = spikeInfo1.avgLatencyMs;
         currentIsSpike = spikeInfo1.isSpike;
 
+        let usedDomFallback1 = false;
+        let domForensics1 = null;
         if (!data) {
-          const domLeads = await extractDOMFallback();
+          const domRes = await extractDOMFallback();
+          const domLeads = domRes.leads || [];
+          domForensics1 = domRes.forensics || null;
           if (domLeads && domLeads.length > 0) {
             data = { people: domLeads };
+            usedDomFallback1 = true;
           } else {
             console.warn(`[Apollo Extractor] Timeout on page ${page}. Continuing.`);
             break;
@@ -546,28 +640,6 @@
           // 1. Short-circuit empty cabinet immediately
           if (sliceTotal === 0) {
             hud.setStatus(`⚡ Cabinet [${sliceLabel}] has 0 leads. Advancing to next...`);
-            harvestPageAuditRecords.push({
-              event: harvestPageAuditRecords.length + 1,
-              sliceIdx: i + 1,
-              totalSlices,
-              sliceLabel,
-              bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
-              seniority: cabinet.seniority || 'All',
-              emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
-              passLabel: 'Pass 1 (A-Z)',
-              sortDirection: 'Company Ascending (A-Z)',
-              page: 1,
-              sliceTotal: 0,
-              rawLeadsCount: 0,
-              freshLeadsCount: 0,
-              duplicateLeadsCount: 0,
-              sliceCumulative: 0,
-              globalCumulative: dedupeStore.size(),
-              latencyMs: reqLatencyMs1,
-              pacingMs: 0,
-              status: 'EMPTY_CABINET_SHORT_CIRCUIT',
-              timestamp: new Date().toISOString()
-            });
             wasEmpty = true;
             pass1Done = true;
             break;
@@ -575,37 +647,21 @@
 
           // 2. Dynamic Runtime Cabinet Reduction
           // If total entries exceed 300 (max reachable with bidirectional sort), subdivide cabinet!
-          // Strictly guarded: Leaves (subdepartments, untagged slices, already subdivided) must NEVER subdivide recursively.
-          if (sliceTotal > 300 && !cabinet.subdepartment && !cabinet.isUntagged && !cabinet._hasSubdivided && !cabinet._leaf) {
+          // Bounded recursion: Stop if depth >= 6 or leaf criteria reached (subdepartment, untagged, coalesced bin, preflight)
+          if (sliceTotal > 300 && !cabinet.subdepartment && !cabinet.isUntagged && !cabinet._leaf && !cabinet.isGrouped && !cabinet._preflight && (cabinet._subdivisionDepth || 0) < 6) {
+            const currentDepth = (cabinet._subdivisionDepth || 0) + 1;
             const subCabinets = subdivideCabinet(cabinet, sliceTotal, { baseFilters });
             if (subCabinets && subCabinets.length > 1) {
-              subCabinets.forEach(sub => { sub._hasSubdivided = true; sub._leaf = true; });
-              console.log(`[Apollo Extractor] ⚡ Cabinet [${sliceLabel}] has ${sliceTotal} leads (> 300 limit). Subdividing into ${subCabinets.length} sub-cabinets:`, subCabinets.map(s => s.label));
+              subCabinets.forEach(sub => {
+                sub._subdivisionDepth = currentDepth;
+                if (currentDepth >= 6 || sub.subdepartment || sub.isUntagged || sub.isGrouped) {
+                  sub._leaf = true;
+                }
+              });
+              console.log(`[Apollo Extractor] ⚡ Cabinet [${sliceLabel}] has ${sliceTotal} leads (> 300 limit). Subdividing into ${subCabinets.length} sub-cabinets at depth ${currentDepth}:`, subCabinets.map(s => s.label));
               cabinets.splice(i, 1, ...subCabinets);
               totalSlices = cabinets.length;
               hud.setStatus(`⚡ Subdivided [${sliceLabel}] (${sliceTotal} leads) into ${subCabinets.length} sub-cabinets...`);
-              harvestPageAuditRecords.push({
-                event: harvestPageAuditRecords.length + 1,
-                sliceIdx: i + 1,
-                totalSlices,
-                sliceLabel,
-                bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
-                seniority: cabinet.seniority || 'All',
-                emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
-                passLabel: 'Pass 1 (A-Z)',
-                sortDirection: 'Company Ascending (A-Z)',
-                page: 1,
-                sliceTotal,
-                rawLeadsCount: 0,
-                freshLeadsCount: 0,
-                duplicateLeadsCount: 0,
-                sliceCumulative: 0,
-                globalCumulative: dedupeStore.size(),
-                latencyMs: reqLatencyMs1,
-                pacingMs: 0,
-                status: `SUBDIVIDED_RUNTIME_INTO_${subCabinets.length}_SUBCABINETS`,
-                timestamp: new Date().toISOString()
-              });
               hud.updateProgress({
                 totalSlices,
                 sliceIdx: i + 1,
@@ -628,17 +684,7 @@
           pass1Exhausted = true;
         }
 
-        const people = (typeof maxEmployees === 'number' && maxEmployees > 0)
-          ? rawPeople.filter(person => {
-              const emp = person.organization?.estimated_num_employees
-                ?? person.organization?.num_employees
-                ?? person.organization?.number_of_employees
-                ?? person.organization_num_employees;
-              return !(typeof emp === 'number' && emp > maxEmployees);
-            })
-          : rawPeople;
-
-        const outOfBoundsCount = Math.max(0, rawPeople.length - people.length);
+        const people = rawPeople;
 
         let cabinetOverlapsInPage = 0;
         let addedInPage = 0;
@@ -665,30 +711,42 @@
           cabinetOverlapsInPage
         });
 
-        const delay = generatePacingDelay(2000, 3200);
-        harvestPageAuditRecords.push({
-          event: harvestPageAuditRecords.length + 1,
-          sliceIdx: i + 1,
-          totalSlices,
+        const delay = engineMode === 'turbo'
+          ? pacer.calculateDelay({
+              remainingQuota: lastHeaders1?.remainingQuota,
+              status: lastHeaders1 ? 200 : 200,
+              retryAfterSeconds: lastHeaders1?.retryAfterSeconds
+            })
+          : generatePacingDelay(2000, 3200);
+        totalDuplicatesFiltered += Math.max(0, people.length - addedInPage);
+
+        const expectedCount1 = (typeof sliceTotal === 'number' && sliceTotal > 0)
+          ? Math.min(30, Math.max(0, sliceTotal - (page - 1) * 30))
+          : 30;
+
+        let pageForensics1 = domForensics1;
+        if (rawPeople.length < expectedCount1 && !pageForensics1 && engineMode === 'standard') {
+          pageForensics1 = await fetchDOMForensics();
+        }
+
+        const trace1 = diagnosticLogger.recordPageTrace({
           sliceLabel,
-          bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
-          seniority: cabinet.seniority || 'All',
-          emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
-          passLabel: `Pass 1: A-Z (p${page})`,
-          sortDirection: 'Company Ascending (A-Z)',
+          sliceIdx: i + 1,
           page,
-          sliceTotal: sliceTotal !== null ? sliceTotal : 'Unknown',
-          rawLeadsCount: rawPeople.length,
-          freshLeadsCount: addedInPage,
-          duplicateLeadsCount: Math.max(0, people.length - addedInPage),
-          outOfBoundsCount,
-          sliceCumulative: sliceHarvested,
-          globalCumulative: dedupeStore.size(),
-          latencyMs: reqLatencyMs1,
-          pacingMs: exitDecision1.shouldExit ? 0 : delay,
-          status: exitDecision1.status,
-          timestamp: new Date().toISOString()
+          passLabel: 'Pass 1 (A-Z)',
+          urlHash: window.location.hash || '',
+          source: (engineMode === 'turbo' && !usedDomFallback1) ? 'NETWORK' : 'DOM_FALLBACK',
+          expectedCount: expectedCount1,
+          rawCount: rawPeople.length,
+          addedCount: addedInPage,
+          duplicatesFiltered: Math.max(0, people.length - addedInPage),
+          domForensics: pageForensics1
         });
+
+        if (trace1 && trace1.isDiscrepancy) {
+          console.warn(`[Apollo Diagnostic] ⚠️ Discrepancy on [${sliceLabel}] Pass 1 p${page}: raw ${trace1.rawCount} < expected ${trace1.expectedCount}`);
+          if (hud) hud.updateDiscrepancy(diagnosticLogger.getDiscrepanciesCount());
+        }
 
         hud.updateProgress({
           sliceIdx: i + 1,
@@ -721,6 +779,7 @@
         }
 
         // Pacing delay
+        telemetry.recordPacing(delay);
         await sleepWithCountdown(delay);
       }
 
@@ -729,8 +788,9 @@
       }
 
       // --- DUAL-SORT CAPACITY BOOST (Pass 2: Z-A) ---
-      const hasUncollectedLeads = sliceTotal === null || sliceHarvested < sliceTotal;
-      const shouldRunPass2 = !pass1Exhausted && hasUncollectedLeads && (cabinet.mode === 'Bidirectional' || sliceHarvested >= 30 || (sliceTotal !== null && sliceTotal > 30));
+      // Auto-skipping Z-A disabled: every non-empty cabinet executes Pass 2 (Z-A) to capture the opposite end of the alphabet.
+      // If all leads on Z-A were already collected in Pass 1, sweep convergence will early-exit safely after verifying page 1.
+      const shouldRunPass2 = sliceHarvested > 0 || (typeof sliceTotal === 'number' && sliceTotal > 0);
       if (!harvestAbort && shouldRunPass2 && dedupeStore.size() < targetLeadLimit) {
         hud.setStatus(`⚡ Capacity Boost: Executing Pass 2 (Z-A) for [${sliceLabel}]...`);
         hud.updateProgress({
@@ -746,6 +806,12 @@
           latencyMs: currentLatencyMs,
           isLatencySpike: currentIsSpike
         });
+
+        // Pre-Cabinet Sort Guard: Force sort_ascending: false before Pass 2
+        window.postMessage({
+          type: 'APOLLO_SET_SORT',
+          sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false }
+        }, '*');
 
         for (let page = 1; page <= 5; page++) {
           if (harvestAbort || dedupeStore.size() >= targetLeadLimit) break;
@@ -765,25 +831,57 @@
             latencyMs: currentLatencyMs,
             isLatencySpike: currentIsSpike
           });
-          const waitPromise = waitForBatch();
+          let data = null;
+          let lastHeaders2 = null;
 
-          if (page === 1) {
-            const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
-            window.postMessage({
-              type: 'APOLLO_NAVIGATE_HASH',
-              hash: newHash,
-              sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false },
-              resetPage1: true
-            }, '*');
-            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+          if (engineMode === 'turbo') {
+            const reqStart2 = performance.now();
+            const sortParam = { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false };
+            const payload2 = buildPayloadForCabinet(baseFilters, cabinet, sortParam, page);
+            const directRes = await fetchDirectSearchPage(payload2, page, sortParam);
+            const reqLatencyMs2 = Math.round(performance.now() - reqStart2);
+            telemetry.recordRequest(reqLatencyMs2);
+
+            if (directRes && directRes.success && directRes.data) {
+              data = directRes.data;
+              lastHeaders2 = directRes.headers || null;
+            } else {
+              console.warn(`[Apollo Extractor] Turbo direct fetch failed on Pass 2 p${page} (${directRes?.error || 'Unknown'}). Falling back to standard DOM navigation...`);
+              const waitPromise = waitForBatch();
+              if (page === 1) {
+                const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
+                window.postMessage({
+                  type: 'APOLLO_NAVIGATE_HASH',
+                  hash: newHash,
+                  sort: sortParam,
+                  resetPage1: true
+                }, '*');
+                window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+              } else {
+                window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+              }
+              data = await waitPromise;
+            }
           } else {
-            window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
-          }
+            const waitPromise = waitForBatch();
+            if (page === 1) {
+              const newHash = buildHashForSlice(currentHash, cabinet, 'sanitized_organization_name_unanalyzed', false);
+              window.postMessage({
+                type: 'APOLLO_NAVIGATE_HASH',
+                hash: newHash,
+                sort: { sort_by_field: 'sanitized_organization_name_unanalyzed', sort_ascending: false },
+                resetPage1: true
+              }, '*');
+              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: 1 }, '*');
+            } else {
+              window.postMessage({ type: 'APOLLO_CLICK_PAGE', page: page }, '*');
+            }
 
-          const reqStart2 = performance.now();
-          let data = await waitPromise;
-          const reqLatencyMs2 = Math.round(performance.now() - reqStart2);
-          telemetry.recordRequest(reqLatencyMs2);
+            const reqStart2 = performance.now();
+            data = await waitPromise;
+            const reqLatencyMs2 = Math.round(performance.now() - reqStart2);
+            telemetry.recordRequest(reqLatencyMs2);
+          }
 
           const remPages2 = getEstimatedRemainingPages(i, page, true);
           currentEtaSeconds = telemetry.estimateRemainingSeconds(remPages2, cabinets.length - i);
@@ -792,27 +890,22 @@
           currentLatencyMs = spikeInfo2.avgLatencyMs;
           currentIsSpike = spikeInfo2.isSpike;
 
+          let usedDomFallback2 = false;
+          let domForensics2 = null;
           if (!data) {
-            const domLeads = await extractDOMFallback();
+            const domRes = await extractDOMFallback();
+            const domLeads = domRes.leads || [];
+            domForensics2 = domRes.forensics || null;
             if (domLeads && domLeads.length > 0) {
               data = { people: domLeads };
+              usedDomFallback2 = true;
             } else {
               break;
             }
           }
 
           const rawPeople = data.people || [];
-          const people = (typeof maxEmployees === 'number' && maxEmployees > 0)
-            ? rawPeople.filter(person => {
-                const emp = person.organization?.estimated_num_employees
-                  ?? person.organization?.num_employees
-                  ?? person.organization?.number_of_employees
-                  ?? person.organization_num_employees;
-                return !(typeof emp === 'number' && emp > maxEmployees);
-              })
-            : rawPeople;
-
-          const outOfBoundsCount = Math.max(0, rawPeople.length - people.length);
+          const people = rawPeople;
 
           let cabinetOverlapsInPage = 0;
           let addedInPage = 0;
@@ -839,30 +932,42 @@
             cabinetOverlapsInPage
           });
 
-          const delay = generatePacingDelay(2000, 3200);
-          harvestPageAuditRecords.push({
-            event: harvestPageAuditRecords.length + 1,
-            sliceIdx: i + 1,
-            totalSlices,
-            sliceLabel,
-            bracket: cabinet.bracket ? (Array.isArray(cabinet.bracket) ? cabinet.bracket.join(';') : String(cabinet.bracket)) : 'All',
-            seniority: cabinet.seniority || 'All',
-            emailStatus: cabinet.emailStatus ? (Array.isArray(cabinet.emailStatus) ? cabinet.emailStatus.join(';') : String(cabinet.emailStatus)) : 'All',
-            passLabel: `Pass 2: Z-A (p${page})`,
-            sortDirection: 'Company Descending (Z-A)',
-            page,
-            sliceTotal: sliceTotal !== null ? sliceTotal : 'Unknown',
-            rawLeadsCount: rawPeople.length,
-            freshLeadsCount: addedInPage,
-            duplicateLeadsCount: Math.max(0, people.length - addedInPage),
-            outOfBoundsCount,
-            sliceCumulative: sliceHarvested,
-            globalCumulative: dedupeStore.size(),
-            latencyMs: reqLatencyMs2,
-            pacingMs: exitDecision2.shouldExit ? 0 : delay,
-            status: exitDecision2.status,
-            timestamp: new Date().toISOString()
-          });
+          const delay = engineMode === 'turbo'
+          ? pacer.calculateDelay({
+              remainingQuota: lastHeaders2?.remainingQuota,
+              status: lastHeaders2 ? 200 : 200,
+              retryAfterSeconds: lastHeaders2?.retryAfterSeconds
+            })
+          : generatePacingDelay(2000, 3200);
+          totalDuplicatesFiltered += Math.max(0, people.length - addedInPage);
+
+        const expectedCount2 = (typeof sliceTotal === 'number' && sliceTotal > 0)
+          ? Math.min(30, Math.max(0, sliceTotal - (page - 1) * 30))
+          : 30;
+
+        let pageForensics2 = domForensics2;
+        if (rawPeople.length < expectedCount2 && !pageForensics2 && engineMode === 'standard') {
+          pageForensics2 = await fetchDOMForensics();
+        }
+
+        const trace2 = diagnosticLogger.recordPageTrace({
+          sliceLabel,
+          sliceIdx: i + 1,
+          page,
+          passLabel: 'Pass 2 (Z-A)',
+          urlHash: window.location.hash || '',
+          source: (engineMode === 'turbo' && !usedDomFallback2) ? 'NETWORK' : 'DOM_FALLBACK',
+          expectedCount: expectedCount2,
+          rawCount: rawPeople.length,
+          addedCount: addedInPage,
+          duplicatesFiltered: Math.max(0, people.length - addedInPage),
+          domForensics: pageForensics2
+        });
+
+        if (trace2 && trace2.isDiscrepancy) {
+          console.warn(`[Apollo Diagnostic] ⚠️ Discrepancy on [${sliceLabel}] Pass 2 p${page}: raw ${trace2.rawCount} < expected ${trace2.expectedCount}`);
+          if (hud) hud.updateDiscrepancy(diagnosticLogger.getDiscrepanciesCount());
+        }
 
           hud.updateProgress({
             sliceIdx: i + 1,
@@ -892,10 +997,12 @@
             break;
           }
 
+          telemetry.recordPacing(delay);
           await sleepWithCountdown(delay);
         }
       }
 
+      telemetry.recordPacing(1500);
       await sleepWithCountdown(1500);
     }
 
@@ -919,15 +1026,23 @@
         totalHarvested: dedupeStore.size(),
         efficiency: eff,
         speed: `${avgSpeed}/m`,
-        duplicatesFiltered: harvestPageAuditRecords.reduce((sum, r) => sum + (r.duplicateLeadsCount || 0), 0),
+        duplicatesFiltered: totalDuplicatesFiltered,
         duration: durationFormatted
       });
     }
 
-    // Auto-trigger export of both leads and page audit CSV
+    // Auto-trigger clean outreach leads export
     exportCollectedLeads();
-    exportHarvestAuditCSV();
+  } catch (err) {
+    console.error('[Apollo Extractor] Unhandled error during harvest execution:', err);
+    if (hud) {
+      hud.setHarvestState('idle');
+      hud.setStatus(`⚠️ Error: ${err.message || 'Harvest failed'}`);
+    }
+  } finally {
+    isHarvesting = false;
   }
+}
 
   async function sleepWithCountdown(ms) {
     const totalSec = Math.ceil(ms / 1000);
@@ -935,8 +1050,8 @@
     while (remainingMs > 0 && !harvestAbort) {
       while (isPaused && !harvestAbort) {
         if (hud) {
-          const pauseMsg = hud.currentPhase === 'preflight'
-            ? '⏸ Preflight Probing paused by operator'
+          const pauseMsg = hud.currentPhase === 'probing'
+            ? '⏸ Density Probing paused by operator'
             : '⏸ Harvest paused by operator';
           hud.setStatus(pauseMsg);
         }
@@ -1033,36 +1148,29 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  function exportPreflightPlanCSV() {
-    if (!lastPreflightPlanCSV) {
-      alert('No preflight plan CSV generated yet. Start an AI harvest to probe density and generate the plan!');
-      return;
+  function exportDiagnosticReport() {
+    const report = diagnosticLogger.getReport();
+    report.engineMode = engineMode;
+    report.totalDuplicatesFiltered = totalDuplicatesFiltered;
+    report.totalUniqueHarvested = dedupeStore.size();
+    if (report.preflight && report.preflight.totalPredictedLeads > 0) {
+      report.preflightFidelity = {
+        totalPredictedLeads: report.preflight.totalPredictedLeads,
+        totalUniqueHarvested: dedupeStore.size(),
+        difference: dedupeStore.size() - report.preflight.totalPredictedLeads,
+        preservationPct: `${((dedupeStore.size() / report.preflight.totalPredictedLeads) * 100).toFixed(1)}%`
+      };
     }
-    chrome.runtime.sendMessage({
-      type: 'APOLLO_DOWNLOAD_CSV',
-      csv: lastPreflightPlanCSV,
-      filename: `apollo_preflight_plan_${Date.now()}.csv`
-    });
-  }
-
-  function exportHarvestAuditCSV() {
-    if (harvestPageAuditRecords.length === 0 && !lastHarvestAuditCSV) {
-      alert('No harvest page events recorded yet.');
-      return;
-    }
-    const totalExpectedInCabinets = cabinets && cabinets.length > 0
-      ? cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0)
-      : undefined;
-    lastHarvestAuditCSV = buildHarvestAuditCSV(harvestPageAuditRecords, {
-      totalHarvested: dedupeStore.size(),
-      totalCabinets: cabinets ? cabinets.length : undefined,
-      totalEstimatedLeads: totalExpectedInCabinets
-    });
-    chrome.runtime.sendMessage({
-      type: 'APOLLO_DOWNLOAD_CSV',
-      csv: lastHarvestAuditCSV,
-      filename: `apollo_harvest_audit_${dedupeStore.size()}_leads_${Date.now()}.csv`
-    });
+    const jsonStr = JSON.stringify(report, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `apollo-diagnostics-${Date.now()}.json`;
+    (document.body || document.documentElement).appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
   // 6. External Message Listener (from Popup / Background)
@@ -1079,16 +1187,21 @@
     } else if (msg.type === 'EXPORT_JSON' || msg.type === 'EXPORT_COMPANY_JSON') {
       exportCollectedJSON();
       sendResponse({ status: 'EXPORTING_JSON' });
-    } else if (msg.type === 'EXPORT_PREFLIGHT_PLAN_CSV') {
-      exportPreflightPlanCSV();
-      sendResponse({ status: 'EXPORTING_PLAN' });
-    } else if (msg.type === 'EXPORT_HARVEST_AUDIT_CSV') {
-      exportHarvestAuditCSV();
-      sendResponse({ status: 'EXPORTING_AUDIT' });
+    } else if (msg.type === 'EXPORT_DIAGNOSTICS') {
+      exportDiagnosticReport();
+      sendResponse({ status: 'EXPORTING_DIAGNOSTICS' });
+    } else if (msg.type === 'SET_ENGINE_MODE') {
+      engineMode = msg.mode === 'standard' ? 'standard' : 'turbo';
+      if (hud) hud.setEngineMode(engineMode);
+      try {
+        chrome.storage.local.set({ apollo_engine_mode: engineMode });
+      } catch (e) {}
+      sendResponse({ status: 'OK', engineMode });
     } else if (msg.type === 'GET_STATUS') {
       sendResponse({
         isHarvesting,
         isPaused,
+        engineMode,
         totalHarvested: dedupeStore.size(),
         totalCompanies: dedupeStore.orgIds?.size || 0
       });

@@ -47,6 +47,15 @@
         <button class="pill-btn active" data-value="50000" id="pillAll">🌟 ALL</button>
       </div>
 
+      <!-- Engine Mode Selector -->
+      <div class="engine-mode-group">
+        <label class="engine-label">Engine Mode</label>
+        <div class="segmented-control" id="engineModeGroup">
+          <button type="button" class="segment-btn active" id="segBtnTurbo" data-mode="turbo" title="Direct In-Page API Engine (5x Speed, Safe Pacing)">⚡ Turbo (5x)</button>
+          <button type="button" class="segment-btn" id="segBtnStandard" data-mode="standard" title="Authentic DOM Navigation Engine (Legacy Safe)">🛡️ Standard</button>
+        </div>
+      </div>
+
       <!-- Action Buttons -->
       <div class="action-buttons">
         <button id="btnStartHarvest" class="btn btn-primary">
@@ -60,45 +69,33 @@
       </div>
     </div>
 
-    <!-- Segmented Export Tray (Leads vs Audits) -->
+    <!-- Export Data -->
     <div class="section-card">
-      <div class="tab-segment">
-        <button class="tab-btn active" id="tabBtnLeads">Data Exports</button>
-        <button class="tab-btn" id="tabBtnAudits">Audit Reports</button>
+      <div class="section-header">
+        <span class="section-title">Export Data</span>
       </div>
-
-      <!-- Tab Content: Leads -->
-      <div class="tab-pane active" id="tabPaneLeads">
-        <div class="export-grid">
-          <button id="btnExportCSV" class="btn btn-success" title="Export clean 28-column outreach CSV">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-            Outreach CSV
-          </button>
-          <button id="btnExportCompanyCSV" class="btn btn-primary" title="Export unique organizations CSV">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-            Companies CSV
-          </button>
-        </div>
-        <div class="export-grid" style="margin-top: 6px;">
-          <button id="btnExportJSON" class="btn btn-secondary" style="font-size: 11px;">
-            Leads JSON
-          </button>
-          <button id="btnExportCompanyJSON" class="btn btn-secondary" style="font-size: 11px;">
-            Companies JSON
-          </button>
-        </div>
+      <div class="export-grid">
+        <button id="btnExportCSV" class="btn btn-success" title="Export clean 28-column outreach CSV">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Outreach CSV
+        </button>
+        <button id="btnExportCompanyCSV" class="btn btn-primary" title="Export unique organizations CSV">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Companies CSV
+        </button>
       </div>
-
-      <!-- Tab Content: Audits -->
-      <div class="tab-pane" id="tabPaneAudits" style="display: none;">
-        <div class="export-stack">
-          <button id="btnExportPreflightPlan" class="btn btn-secondary" title="Export Preflight Density Probes & Cabinet Design Plan">
-            📋 Preflight Architecture Plan CSV
-          </button>
-          <button id="btnExportHarvestAudit" class="btn btn-secondary" title="Export Page-by-Page Harvest Telemetry & Latencies">
-            📊 Page-by-Page Harvest Audit CSV
-          </button>
-        </div>
+      <div class="export-grid" style="margin-top: 6px;">
+        <button id="btnExportJSON" class="btn btn-secondary" style="font-size: 11px;">
+          Leads JSON
+        </button>
+        <button id="btnExportCompanyJSON" class="btn btn-secondary" style="font-size: 11px;">
+          Companies JSON
+        </button>
+      </div>
+      <div style="margin-top: 6px;">
+        <button id="btnExportDiagnostics" class="btn btn-secondary" style="width: 100%; font-size: 11px;" title="Export in-flight diagnostics report with DOM forensics">
+          🐞 Diagnostic Debugger Log
+        </button>
       </div>
     </div>
 

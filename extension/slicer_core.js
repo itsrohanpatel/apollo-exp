@@ -405,6 +405,86 @@ export class DeduplicationStore {
   }
 }
 
+// 3b. Standard Mode Diagnostic Logger
+export class StandardModeDiagnosticLogger {
+  constructor() {
+    this.sessionStartTime = new Date().toISOString();
+    this.pageTraces = [];
+    this.discrepancies = [];
+    this.preflight = null;
+  }
+
+  recordPreflightTelemetry(data) {
+    if (!data || typeof data !== 'object') return null;
+    this.preflight = {
+      startTime: data.startTime || new Date().toISOString(),
+      durationMs: data.durationMs || 0,
+      durationSec: Number(((data.durationMs || 0) / 1000).toFixed(1)),
+      engineMode: data.engineMode || 'standard',
+      totalProbesExecuted: data.totalProbesExecuted || 0,
+      probesPrunedByMath: data.probesPrunedByMath || 0,
+      cabinetsPlanned: data.cabinetsPlanned || (Array.isArray(data.cabinets) ? data.cabinets.length : 0),
+      totalPredictedLeads: data.totalPredictedLeads || (Array.isArray(data.cabinets) ? data.cabinets.reduce((s, c) => s + (c.total || 0), 0) : 0),
+      cabinets: Array.isArray(data.cabinets) ? data.cabinets.map(c => ({
+        label: c.label || 'Cabinet',
+        total: c.total !== undefined ? c.total : null,
+        mode: c.mode || 'Bidirectional',
+        pagesNeeded: c.pagesNeeded || 5
+      })) : [],
+      auditLog: Array.isArray(data.auditLog) ? data.auditLog : []
+    };
+    return this.preflight;
+  }
+
+  recordPageTrace(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const isDiscrepancy = typeof entry.expectedCount === 'number' && entry.rawCount < entry.expectedCount;
+    const trace = {
+      timestamp: new Date().toISOString(),
+      sliceLabel: entry.sliceLabel || 'Unknown',
+      sliceIdx: entry.sliceIdx || 1,
+      page: entry.page || 1,
+      pass: entry.passLabel || 'Pass 1 (A-Z)',
+      urlHash: entry.urlHash || '',
+      source: entry.source || 'NETWORK',
+      expectedCount: entry.expectedCount !== undefined ? entry.expectedCount : 30,
+      rawCount: entry.rawCount || 0,
+      addedCount: entry.addedCount || 0,
+      duplicatesFiltered: entry.duplicatesFiltered || 0,
+      isDiscrepancy,
+      domForensics: entry.domForensics || null
+    };
+    this.pageTraces.push(trace);
+    if (isDiscrepancy) {
+      this.discrepancies.push(trace);
+    }
+    return trace;
+  }
+
+  getDiscrepanciesCount() {
+    return this.discrepancies.length;
+  }
+
+  getReport() {
+    return {
+      sessionStartTime: this.sessionStartTime,
+      reportGeneratedAt: new Date().toISOString(),
+      preflight: this.preflight,
+      totalPagesHarvested: this.pageTraces.length,
+      totalDiscrepancies: this.discrepancies.length,
+      discrepancies: this.discrepancies,
+      pageTraces: this.pageTraces
+    };
+  }
+
+  clear() {
+    this.pageTraces = [];
+    this.discrepancies = [];
+    this.preflight = null;
+    this.sessionStartTime = new Date().toISOString();
+  }
+}
+
 // 4. Moving Window Exclusion Payload Builder
 export function buildExclusionPayload(basePayload, excludedOrgIds = [], excludedPersonIds = []) {
   const payload = { ...basePayload };
@@ -792,7 +872,7 @@ export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = nul
   const pairs = rawQuery.split('&').filter(Boolean);
   const filteredPairs = [];
 
-  let bracketStr = null;
+  let brackets = null;
   let seniority = null;
   let emailStatus = null;
   let personTitles = null;
@@ -800,13 +880,17 @@ export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = nul
   let department = null;
 
   if (typeof cabinetOrBracket === 'object' && cabinetOrBracket !== null) {
-    bracketStr = Array.isArray(cabinetOrBracket.bracket) ? cabinetOrBracket.bracket[0] : (cabinetOrBracket.bracket || null);
+    if (Array.isArray(cabinetOrBracket.bracket)) {
+      brackets = cabinetOrBracket.bracket;
+    } else if (cabinetOrBracket.bracket) {
+      brackets = [cabinetOrBracket.bracket];
+    }
     seniority = cabinetOrBracket.seniority || null;
     emailStatus = cabinetOrBracket.emailStatus || null;
     subdepartment = cabinetOrBracket.subdepartment || null;
     department = cabinetOrBracket.department || null;
   } else if (cabinetOrBracket) {
-    bracketStr = String(cabinetOrBracket);
+    brackets = [String(cabinetOrBracket)];
   }
 
   for (const pair of pairs) {
@@ -829,19 +913,33 @@ export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = nul
   }
 
   filteredPairs.push('page=1');
-  if (bracketStr) {
-    filteredPairs.push(`organizationNumEmployeesRanges[]=${encodeURIComponent(bracketStr)}`);
+  if (Array.isArray(brackets)) {
+    for (const b of brackets) {
+      filteredPairs.push(`organizationNumEmployeesRanges[]=${encodeURIComponent(b)}`);
+    }
   }
   if (seniority) {
-    filteredPairs.push(`personSeniorities[]=${encodeURIComponent(seniority)}`);
+    const raw = Array.isArray(seniority) ? seniority : [seniority];
+    const items = raw.flatMap(s => typeof s === 'string' && s.includes('+') ? s.split('+') : s);
+    for (const sen of items) {
+      filteredPairs.push(`personSeniorities[]=${encodeURIComponent(sen)}`);
+    }
   }
   if (Array.isArray(emailStatus)) {
     for (const est of emailStatus) {
       filteredPairs.push(`contactEmailStatus[]=${encodeURIComponent(est)}`);
     }
   }
-  if (subdepartment) {
+  if (Array.isArray(subdepartment)) {
+    for (const sub of subdepartment) {
+      filteredPairs.push(`personDepartmentOrSubdepartments[]=${encodeURIComponent(sub)}`);
+    }
+  } else if (subdepartment) {
     filteredPairs.push(`personDepartmentOrSubdepartments[]=${encodeURIComponent(subdepartment)}`);
+  } else if (Array.isArray(department)) {
+    for (const d of department) {
+      filteredPairs.push(`personDepartmentOrSubdepartments[]=${encodeURIComponent(d)}`);
+    }
   } else if (department) {
     filteredPairs.push(`personDepartmentOrSubdepartments[]=${encodeURIComponent(department)}`);
   }
@@ -852,6 +950,103 @@ export function buildHashForSlice(currentHash, cabinetOrBracket, sortField = nul
   filteredPairs.push(`_t=${Date.now()}`);
 
   return `${path}?${filteredPairs.join('&')}`;
+}
+
+// 8b-2. Direct API Payload Builder for Turbo & In-Page Engine
+/**
+ * Merges base search filters with cabinet-specific partition criteria (headcount bracket,
+ * seniority, subdepartment/department, email status, keywords) and sorting/pagination parameters into
+ * a clean, authentic payload for Apollo's /api/v1/mixed_people/search or mixed_companies/search API.
+ *
+ * @param {Object} baseFilters - Baseline filters parsed from Apollo URL hash
+ * @param {Object} cabinet - Target cabinet slice (bracket, seniority, subdepartment, emailStatus, etc.)
+ * @param {Object|null} sortParam - Sort options ({ sort_by_field, sort_ascending })
+ * @param {number} page - 1-based page number (1 to 5)
+ * @returns {Object} JSON payload ready for direct POST
+ */
+export function buildPayloadForCabinet(baseFilters = {}, cabinet = {}, sortParam = null, page = 1) {
+  const base = (baseFilters && typeof baseFilters === 'object') ? baseFilters : {};
+  const cab = (cabinet && typeof cabinet === 'object') ? cabinet : {};
+
+  const payload = {
+    ...base,
+    ...(cab.filters || {})
+  };
+
+  // 1. Headcount Bracket
+  if (cab.bracket !== undefined && cab.bracket !== null) {
+    payload.organization_num_employees_ranges = Array.isArray(cab.bracket)
+      ? cab.bracket.map(String)
+      : [String(cab.bracket)];
+  }
+
+  // 2. Seniority
+  if (cab.seniority !== undefined && cab.seniority !== null) {
+    const raw = Array.isArray(cab.seniority) ? cab.seniority : [cab.seniority];
+    payload.person_seniorities = raw.flatMap(s => typeof s === 'string' && s.includes('+') ? s.split('+') : s);
+  }
+
+  // 3. Sub-Department / Department
+  if (cab.subdepartment !== undefined && cab.subdepartment !== null) {
+    payload.person_department_or_subdepartments = Array.isArray(cab.subdepartment)
+      ? cab.subdepartment
+      : [cab.subdepartment];
+  } else if (cab.department !== undefined && cab.department !== null) {
+    payload.person_department_or_subdepartments = Array.isArray(cab.department)
+      ? cab.department
+      : [cab.department];
+  }
+
+  // 4. Contact Email Status
+  if (cab.emailStatus !== undefined && cab.emailStatus !== null) {
+    payload.contact_email_status = Array.isArray(cab.emailStatus)
+      ? cab.emailStatus
+      : [cab.emailStatus];
+  }
+
+  // 5. Keyword search override if specified in cabinet
+  if (typeof cab.keyword === 'string' && cab.keyword.trim().length > 0) {
+    payload.q_keywords = cab.keyword.trim();
+  }
+
+  // 6. Target Work URLs & LinkedIn URLs preservation from base
+  if (base.organization_linkedin_urls) {
+    payload.organization_linkedin_urls = base.organization_linkedin_urls;
+    payload.q_organization_linkedin_urls = base.organization_linkedin_urls;
+  }
+  if (base.person_linkedin_urls) {
+    payload.person_linkedin_urls = base.person_linkedin_urls;
+    payload.q_person_linkedin_urls = base.person_linkedin_urls;
+  }
+  if (base.person_not_linkedin_urls) {
+    payload.person_not_linkedin_urls = base.person_not_linkedin_urls;
+  }
+
+  // 7. Sort Options
+  if (sortParam && typeof sortParam === 'object') {
+    if (sortParam.sort_by_field) {
+      payload.sort_by_field = sortParam.sort_by_field;
+    }
+    if (sortParam.sort_ascending !== undefined) {
+      payload.sort_ascending = sortParam.sort_ascending;
+    }
+  }
+
+  // 8. Pagination (Authentic Apollo Page Size)
+  payload.page = typeof page === 'number' && page > 0 ? page : 1;
+  payload.per_page = 30;
+
+  // Clean runtime/internal markers so Apollo's API never complains
+  delete payload._hasSubdivided;
+  delete payload._leaf;
+  delete payload._subdivisionDepth;
+  delete payload.isUntagged;
+  delete payload.total;
+  delete payload.pagesNeeded;
+  delete payload.mode;
+  delete payload.label;
+
+  return payload;
 }
 
 // 8c. Max Employee Detector (Extracts explicit or inferred upper employee limit from filters/options)
@@ -1451,8 +1646,8 @@ export function subdivideCabinet(cabinet = {}, totalEntries = 0, options = {}) {
   }
 
   // Leaf granularity guard: Never re-subdivide cabinets that already represent subdepartments,
-  // untagged slices, or have been explicitly marked as leaf units.
-  if (cabinet.subdepartment || cabinet.isUntagged || cabinet._leaf) {
+  // untagged slices, grouped coalesced bins, or have been explicitly marked as leaf units.
+  if (cabinet.subdepartment || cabinet.isUntagged || cabinet._leaf || cabinet.isGrouped || cabinet._preflight) {
     return [cabinet];
   }
 
@@ -2996,11 +3191,19 @@ export function computeRollingVelocity(history = [], now = Date.now(), windowMs 
 // 21. Mission Control HUD & Telemetry: Adaptive Harvest Telemetry Estimator
 export class HarvestTelemetryEstimator {
   constructor(options = {}) {
-    this.defaultLatencyMs = typeof options.defaultLatencyMs === 'number' ? options.defaultLatencyMs : 400;
-    this.defaultPacingMs = options.defaultPacingMs || 2500;
+    this.engineMode = options.engineMode || 'standard';
+    const isTurbo = this.engineMode === 'turbo';
+    this.defaultLatencyMs = typeof options.defaultLatencyMs === 'number'
+      ? options.defaultLatencyMs
+      : (isTurbo ? 350 : 400);
+    this.defaultPacingMs = typeof options.defaultPacingMs === 'number'
+      ? options.defaultPacingMs
+      : (isTurbo ? 120 : (options.defaultPacingMs || 2500));
     this.cooldownEveryN = options.cooldownEveryN || 10;
     this.cooldownDurationMs = options.cooldownDurationMs || 45000;
-    this.enableCooldown = options.enableCooldown !== false;
+    this.enableCooldown = options.enableCooldown !== undefined
+      ? (options.enableCooldown === true)
+      : false;
 
     this.latencySamples = []; // Rolling buffer of measured API roundtrip ms
     this.maxSamples = options.maxSamples || 25;
@@ -3024,6 +3227,15 @@ export class HarvestTelemetryEstimator {
       }
     }
     this.requestsCompleted++;
+  }
+
+  recordPacing(pacingMs) {
+    if (typeof pacingMs === 'number' && pacingMs >= 0) {
+      this.pacingSamples.push(pacingMs);
+      if (this.pacingSamples.length > this.maxSamples) {
+        this.pacingSamples.shift();
+      }
+    }
   }
 
   getAverageLatencyMs() {
@@ -3058,7 +3270,7 @@ export class HarvestTelemetryEstimator {
 
     // Remaining cooldown breaks
     let cooldownTotalMs = 0;
-    if (this.enableCooldown && this.cooldownEveryN > 0) {
+    if (this.enableCooldown && this.cooldownEveryN > 0 && this.cooldownDurationMs > 0) {
       const requestsUntilNext = this.cooldownEveryN - (this.requestsCompleted % this.cooldownEveryN);
       let futureCooldowns = 0;
       if (pages >= requestsUntilNext) {
@@ -3067,8 +3279,8 @@ export class HarvestTelemetryEstimator {
       cooldownTotalMs = futureCooldowns * this.cooldownDurationMs;
     }
 
-    // Hash change / cabinet initialization buffer (500ms per cabinet)
-    const transitionMs = Math.max(0, remainingCabinets) * 500;
+    // Hash change / cabinet initialization buffer
+    const transitionMs = Math.max(0, remainingCabinets) * (this.engineMode === 'turbo' ? 50 : 500);
 
     const totalEstimatedMs = (pages * perRequestMs) + cooldownTotalMs + transitionMs;
     return Math.max(1, Math.round(totalEstimatedMs / 1000));
@@ -3250,6 +3462,10 @@ export const ALL_APOLLO_SENIORITIES = [
   'founder', 'owner', 'c_suite', 'partner', 'vp', 'head', 'director', 'intern', 'senior', 'manager', 'entry'
 ];
 
+export const HIGH_DENSITY_SENIORITY_ORDER = [
+  'entry', 'manager', 'senior', 'director', 'vp', 'head', 'c_suite', 'founder', 'partner', 'owner', 'intern'
+];
+
 export const EMAIL_STATUS_PARTITIONS = [
   { key: 'verified', values: ['verified'] },
   { key: 'guessed', values: ['guessed'] },
@@ -3330,6 +3546,98 @@ export function generateMultiDimensionalPlan(basePayload = {}, options = {}) {
 }
 
 /**
+ * 24b. Dynamic Bin-Packing Coalescence Engine (First-Fit Decreasing)
+ * Groups sparse partition items (seniorities, subdepartments) into aggregate
+ * cabinets whose cumulative lead count is <= maxBinCapacity (default 300 leads).
+ *
+ * @param {Array<Object>} items - Array of partition objects { key, total, label, ... }
+ * @param {Object} options - { maxBinCapacity = 300, keyField = 'key', labelField = 'label', countField = 'total' }
+ * @returns {Array<Object>} Coalesced bins { keys: Array<string>, total: number, label: string, isGrouped: boolean, items: Array }
+ */
+export function coalescePartitionsIntoBins(items = [], options = {}) {
+  const maxCapacity = typeof options === 'number'
+    ? options
+    : (options && options.maxBinCapacity !== undefined ? options.maxBinCapacity : 300);
+  const opts = typeof options === 'object' && options !== null ? options : {};
+  const keyField = opts.keyField || 'key';
+  const labelField = opts.labelField || 'label';
+  const countField = opts.countField || 'total';
+
+  const validItems = (Array.isArray(items) ? items : []).filter(it => it && typeof it[countField] === 'number' && it[countField] > 0);
+  if (validItems.length === 0) return [];
+
+  const standalone = [];
+  const packable = [];
+
+  for (const it of validItems) {
+    if (it[countField] >= maxCapacity) {
+      standalone.push(it);
+    } else {
+      packable.push(it);
+    }
+  }
+
+  // Sort packable items descending (First-Fit Decreasing)
+  packable.sort((a, b) => b[countField] - a[countField]);
+
+  const bins = [];
+  for (const it of packable) {
+    let placed = false;
+    for (const bin of bins) {
+      if (bin.total + it[countField] <= maxCapacity) {
+        bin.items.push(it);
+        bin.total += it[countField];
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      bins.push({
+        items: [it],
+        total: it[countField]
+      });
+    }
+  }
+
+  const result = [];
+
+  // 1. Standalone items first (preserving their high density)
+  for (const s of standalone) {
+    result.push({
+      items: [s],
+      keys: [s[keyField]],
+      total: s[countField],
+      label: s[labelField] || String(s[keyField]),
+      isGrouped: false
+    });
+  }
+
+  // 2. Coalesced bins
+  for (const b of bins) {
+    const keys = b.items.map(it => it[keyField]);
+    const labels = b.items.map(it => it[labelField] || it[keyField]);
+    let label;
+    if (labels.length === 1) {
+      label = labels[0];
+    } else if (labels.length <= 3) {
+      label = labels.join('+');
+    } else {
+      label = `${labels.length} Grouped (${labels[0]}+${labels[1]}+...)`;
+    }
+
+    result.push({
+      items: b.items,
+      keys,
+      total: b.total,
+      label,
+      isGrouped: keys.length > 1
+    });
+  }
+
+  return result;
+}
+
+/**
  * 25. Adaptive Dynamic Cabin Engine:
  * Autonomous Pre-Flight Density Probing, Minimal API Calls & Recursive Bisection.
  * Dynamically resolves only non-empty, reachable units (<= 250 leads each).
@@ -3351,6 +3659,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
   const checkPause = typeof options.checkPause === 'function' ? options.checkPause : null;
   const optimalUnits = [];
   const auditLog = Array.isArray(options.auditLog) ? options.auditLog : [];
+  let probesPrunedByMath = 0;
 
   const checkPauseAndAbort = async () => {
     if (checkPause) {
@@ -3543,7 +3852,13 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     }
   }
 
-  const queue = [...startingBrackets];
+  const decomposedPools = new Map();
+  const queue = startingBrackets.map(b => ({
+    ...b,
+    parentRange: b.label,
+    parentMin: b.min,
+    parentMax: b.max
+  }));
 
   while (queue.length > 0) {
     if (await checkPauseAndAbort()) break;
@@ -3624,14 +3939,43 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         pagesNeeded,
         mode
       });
+
+      if (item.min === item.max) {
+        const poolKey = item.parentRange || item.label;
+        if (!decomposedPools.has(poolKey)) {
+          decomposedPools.set(poolKey, {
+            parentRange: poolKey,
+            parentMin: item.parentMin !== undefined ? item.parentMin : item.min,
+            parentMax: item.parentMax !== undefined ? item.parentMax : item.max,
+            intactHeadcounts: new Set(),
+            decomposedHeadcounts: new Set(),
+            seniorityMap: new Map()
+          });
+        }
+        decomposedPools.get(poolKey).intactHeadcounts.add(item.label);
+      }
       continue;
     }
 
     // Bisect headcount whenever min < max and density exceeds effectiveCeiling
     if (item.min < item.max) {
       const mid = Math.floor((item.min + item.max) / 2);
-      const left = { min: item.min, max: mid, label: `${item.min},${mid}` };
-      const right = { min: mid + 1, max: item.max, label: `${mid + 1},${item.max}` };
+      const left = {
+        min: item.min,
+        max: mid,
+        label: `${item.min},${mid}`,
+        parentRange: item.parentRange || item.label,
+        parentMin: item.parentMin !== undefined ? item.parentMin : item.min,
+        parentMax: item.parentMax !== undefined ? item.parentMax : item.max
+      };
+      const right = {
+        min: mid + 1,
+        max: item.max,
+        label: `${mid + 1},${item.max}`,
+        parentRange: item.parentRange || item.label,
+        parentMin: item.parentMin !== undefined ? item.parentMin : item.min,
+        parentMax: item.parentMax !== undefined ? item.parentMax : item.max
+      };
       logAudit({
         type: 'BISECTION_SPLIT',
         label: item.label,
@@ -3710,7 +4054,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
     // Single integer headcount or tight span < 5 exceeding maxLimit: Pivot to Seniorities
     const seniorities = Array.isArray(basePayload.person_seniorities) && basePayload.person_seniorities.length > 0
       ? basePayload.person_seniorities
-      : ALL_APOLLO_SENIORITIES;
+      : HIGH_DENSITY_SENIORITY_ORDER;
 
     logAudit({
       type: 'SENIORITY_PIVOT',
@@ -3720,7 +4064,73 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       decision: `Single headcount density ceiling exceeded (${count} > ${bidirectionalLimit} leads). Pivoting to ${seniorities.length} Apollo seniorities.`
     });
 
-    for (const sen of seniorities) {
+    const poolKey = item.parentRange || item.label;
+    if (!decomposedPools.has(poolKey)) {
+      decomposedPools.set(poolKey, {
+        parentRange: poolKey,
+        parentMin: item.parentMin !== undefined ? item.parentMin : item.min,
+        parentMax: item.parentMax !== undefined ? item.parentMax : item.max,
+        intactHeadcounts: new Set(),
+        decomposedHeadcounts: new Set(),
+        seniorityMap: new Map()
+      });
+    }
+    const pool = decomposedPools.get(poolKey);
+    pool.decomposedHeadcounts.add(item.label);
+
+    let accountedFor = 0;
+    for (let senIdx = 0; senIdx < seniorities.length; senIdx++) {
+      const sen = seniorities[senIdx];
+
+      // Mathematical Remainder Pruning:
+      // If we've probed at least 2 seniorities, and remaining leads <= effectiveCap:
+      const effectiveCap = options.coalesceBinCapacity || bidirectionalLimit;
+      if (options.remainderPruning && typeof count === 'number' && count > 0 && senIdx >= 2 && (!basePayload.person_seniorities || basePayload.person_seniorities.length === 0)) {
+        const remainingLeads = Math.max(0, count - accountedFor);
+        const unprobedSeniorities = seniorities.slice(senIdx);
+
+        if (unprobedSeniorities.length > 1 && remainingLeads <= effectiveCap) {
+          const skippedCount = unprobedSeniorities.length;
+          probesPrunedByMath += skippedCount;
+
+          if (remainingLeads > 0) {
+            const prunedCompositeKey = unprobedSeniorities.join('+');
+            if (!pool.seniorityMap.has(prunedCompositeKey)) {
+              pool.seniorityMap.set(prunedCompositeKey, new Map());
+            }
+            pool.seniorityMap.get(prunedCompositeKey).set(item.label, remainingLeads);
+
+            logAudit({
+              type: 'REMAINDER_PRUNE',
+              label: `${item.label} [${prunedCompositeKey}]`,
+              bracket: item.label,
+              seniority: prunedCompositeKey,
+              leadsCount: remainingLeads,
+              decision: `Mathematical remainder pruning: Remaining ${remainingLeads} <= ${effectiveCap} leads. Pruned ${skippedCount} tail seniority probes (${unprobedSeniorities.join(', ')}).`
+            });
+
+            if (onProbeProgress) {
+              onProbeProgress({
+                type: 'REMAINDER_PRUNE',
+                label: `${item.label} [${prunedCompositeKey}]`,
+                skippedCount,
+                remainingLeads
+              });
+            }
+          } else {
+            logAudit({
+              type: 'REMAINDER_PRUNE',
+              label: `${item.label} Tail Seniorities`,
+              bracket: item.label,
+              seniority: unprobedSeniorities.join(','),
+              leadsCount: 0,
+              decision: `Mathematical remainder pruning: 100% of bracket leads accounted for (${accountedFor}/${count}). Pruned ${skippedCount} tail seniority probes.`
+            });
+          }
+          break; // Exit seniority loop for this headcount!
+        }
+      }
+
       if (await checkPauseAndAbort()) break;
       const senCount = await probeFn({
         organization_num_employees_ranges: [item.label],
@@ -3728,6 +4138,10 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
       });
       if (await checkPauseAndAbort()) break;
       if (onProbeProgress) onProbeProgress({ type: 'SENIORITY_PROBE', label: `${item.label} ${sen}`, total: senCount });
+
+      if (typeof senCount === 'number') {
+        accountedFor += senCount;
+      }
 
       if (senCount === 0) {
         logAudit({
@@ -3751,30 +4165,13 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         await sleepFn(delayMs);
       }
 
-      // Seniority slices have 300-lead capacity via Bidirectional sweep
+      // Seniority slices have 300-lead capacity via Bidirectional sweep.
+      // Collect non-dense seniorities into cross-headcount pool.
       if (typeof senCount === 'number' && senCount <= bidirectionalLimit) {
-        const mode = senCount <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
-        const pagesNeeded = Math.min(10, Math.ceil(senCount / APOLLO_PAGE_SIZE));
-        logAudit({
-          type: 'SENIORITY_PROBE',
-          label: `${item.label} ${sen}`,
-          bracket: item.label,
-          seniority: sen,
-          leadsCount: senCount,
-          decision: `Within safe limit (${senCount} <= ${bidirectionalLimit} leads). Approved as cabinet [${item.label} ${sen}].`,
-          mode,
-          pagesNeeded
-        });
-        optimalUnits.push({
-          label: `${item.label} ${sen}`,
-          bracket: [item.label],
-          seniority: sen,
-          emailStatus: null,
-          keyword: null,
-          total: senCount,
-          pagesNeeded,
-          mode
-        });
+        if (!pool.seniorityMap.has(sen)) {
+          pool.seniorityMap.set(sen, new Map());
+        }
+        pool.seniorityMap.get(sen).set(item.label, senCount);
         continue;
       }
 
@@ -3847,7 +4244,7 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
             });
 
             let subTotal = 0;
-            const subCabinets = [];
+            const probedSubdepts = [];
 
             for (const sub of availableSubdepts) {
               if (await checkPauseAndAbort()) break;
@@ -3883,40 +4280,79 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
                 await sleepFn(delayMs);
               }
 
-              const subMode = subCount <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
-              const subPages = Math.min(10, Math.ceil(subCount / APOLLO_PAGE_SIZE));
               subTotal += (typeof subCount === 'number' ? subCount : 0);
-
-              logAudit({
-                type: 'SUBDEPARTMENT_PROBE',
-                label: `${item.label} ${sen} ${emailPartition.key} ${sub.label}`,
-                bracket: item.label,
-                seniority: sen,
-                emailStatus: emailPartition.key,
-                leadsCount: subCount,
-                decision: `Approved as sub-department cabinet [${item.label} ${sen} ${emailPartition.key} ${sub.label}].`,
-                mode: subMode,
-                pagesNeeded: subPages
-              });
-              subCabinets.push({
-                label: `${item.label} ${sen} ${emailPartition.key} ${sub.label}`,
-                bracket: [item.label],
-                seniority: sen,
-                emailStatus: emailPartition.values,
-                subdepartment: sub.queryKey,
-                department: masterDeptKey,
-                _leaf: true,
-                keyword: null,
-                total: subCount,
-                pagesNeeded: subPages,
-                mode: subMode
+              probedSubdepts.push({
+                key: sub.queryKey,
+                label: sub.label,
+                total: subCount
               });
             }
 
-            if (subCabinets.length > 0) {
-              for (const sc of subCabinets) {
-                optimalUnits.push(sc);
+            if (probedSubdepts.length > 0) {
+              const targetCapacity = Math.min(260, bidirectionalLimit - 40 > 0 ? bidirectionalLimit - 40 : bidirectionalLimit);
+              const subBins = (options.coalescePartitions !== false)
+                ? coalescePartitionsIntoBins(probedSubdepts, { maxBinCapacity: targetCapacity })
+                : probedSubdepts.map(s => ({ items: [s], keys: [s.key], total: s.total, label: s.label, isGrouped: false }));
+
+              for (const bin of subBins) {
+                const subMode = bin.total <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+                const subPages = Math.min(10, Math.ceil(bin.total / APOLLO_PAGE_SIZE));
+
+                if (bin.isGrouped) {
+                  logAudit({
+                    type: 'SUBDEPARTMENT_BIN_COALESCED',
+                    label: `${item.label} ${sen} ${emailPartition.key} [${bin.items.map(i => i.label).join('+')}]`,
+                    bracket: item.label,
+                    seniority: sen,
+                    emailStatus: emailPartition.key,
+                    leadsCount: bin.total,
+                    decision: `Coalesced ${bin.keys.length} sparse subdepartments (${bin.items.map(i => i.label).join(', ')}) into single bin (${bin.total} leads <= ${targetCapacity}).`,
+                    mode: subMode,
+                    pagesNeeded: subPages
+                  });
+                  optimalUnits.push({
+                    label: `${item.label} ${sen} ${emailPartition.key} [${bin.items.map(i => i.label).join('+')}]`,
+                    bracket: [item.label],
+                    seniority: sen,
+                    emailStatus: emailPartition.values,
+                    subdepartment: bin.keys,
+                    department: masterDeptKey,
+                    isGrouped: true,
+                    _leaf: true,
+                    keyword: null,
+                    total: bin.total,
+                    pagesNeeded: subPages,
+                    mode: subMode
+                  });
+                } else {
+                  const single = bin.items[0];
+                  logAudit({
+                    type: 'SUBDEPARTMENT_PROBE',
+                    label: `${item.label} ${sen} ${emailPartition.key} ${single.label}`,
+                    bracket: item.label,
+                    seniority: sen,
+                    emailStatus: emailPartition.key,
+                    leadsCount: single.total,
+                    decision: `Approved as sub-department cabinet [${item.label} ${sen} ${emailPartition.key} ${single.label}].`,
+                    mode: subMode,
+                    pagesNeeded: subPages
+                  });
+                  optimalUnits.push({
+                    label: `${item.label} ${sen} ${emailPartition.key} ${single.label}`,
+                    bracket: [item.label],
+                    seniority: sen,
+                    emailStatus: emailPartition.values,
+                    subdepartment: single.key,
+                    department: masterDeptKey,
+                    _leaf: true,
+                    keyword: null,
+                    total: single.total,
+                    pagesNeeded: subPages,
+                    mode: subMode
+                  });
+                }
               }
+
               const untaggedCount = emailCount - subTotal;
               if (untaggedCount > 0) {
                 const untaggedMode = untaggedCount <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
@@ -3978,132 +4414,172 @@ export async function resolveAdaptiveExecutionTree(probeFn, basePayload = {}, op
         });
       }
     }
+
   }
 
-  return options.detailed ? { cabinets: optimalUnits, auditLog, aborted: isAborted() } : optimalUnits;
-}
+  // Process cross-headcount seniority pools
+  for (const pool of decomposedPools.values()) {
+    if (pool.decomposedHeadcounts.size === 0) continue;
 
-// 27. Pre-flight Check & Adaptive Cabinet Design CSV Generator
-export function buildPreflightPlanCSV(cabinets = [], auditLog = [], options = {}) {
-  const currentHash = options.currentHash || '';
-  const totalCabinets = Array.isArray(cabinets) ? cabinets.length : 0;
-  const totalProbes = Array.isArray(auditLog) ? auditLog.length : 0;
-  const totalExpectedLeads = Array.isArray(cabinets)
-    ? cabinets.reduce((sum, c) => sum + (typeof c.total === 'number' ? c.total : 0), 0)
-    : 0;
+    const targetCapacity = options.coalesceBinCapacity || bidirectionalLimit;
+    const allDecomposed = Array.from(pool.decomposedHeadcounts).sort((a, b) => {
+      const pa = parseInt(a.split(',')[0], 10);
+      const pb = parseInt(b.split(',')[0], 10);
+      return pa - pb;
+    });
+    const allDecomposedKey = allDecomposed.join(',');
+    const canUseParentRange = pool.intactHeadcounts.size === 0 && pool.parentMin !== pool.parentMax;
 
-  const formatCSVCell = (val) => {
-    let str = sanitizeCSVValue(val, { singleLine: true, escapeFormulas: true });
-    if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
-      return `"${str.replace(/"/g, '""')}"`;
+    // Group seniorities that have totalForSen <= targetCapacity by their exact contributing headcounts!
+    const senioritiesByHcKey = new Map();
+
+    for (const [sen, countsByHeadcount] of pool.seniorityMap.entries()) {
+      const activeHcEntries = Array.from(countsByHeadcount.entries()).filter(([_, c]) => c > 0);
+      if (activeHcEntries.length === 0) continue;
+
+      const totalForSen = activeHcEntries.reduce((sum, [_, c]) => sum + c, 0);
+
+      if (totalForSen <= targetCapacity && options.coalescePartitions !== false) {
+        // Collect contributing headcounts sorted ascending
+        const contributingHeadcounts = activeHcEntries.map(([hc]) => hc).sort((a, b) => {
+          const pa = parseInt(a.split(',')[0], 10);
+          const pb = parseInt(b.split(',')[0], 10);
+          return pa - pb;
+        });
+        const hcKey = contributingHeadcounts.join(',');
+
+        if (!senioritiesByHcKey.has(hcKey)) {
+          senioritiesByHcKey.set(hcKey, {
+            headcounts: contributingHeadcounts,
+            seniorities: []
+          });
+        }
+        senioritiesByHcKey.get(hcKey).seniorities.push({ sen, total: totalForSen });
+      } else {
+        // Exceeds targetCapacity: pack individual headcount integers for this seniority into sub-300 multi-headcount bins!
+        const hcItems = activeHcEntries.map(([hc, hcCount]) => ({
+          key: hc,
+          label: hc,
+          total: hcCount
+        }));
+
+        const hcBins = (options.coalescePartitions !== false)
+          ? coalescePartitionsIntoBins(hcItems, { maxBinCapacity: targetCapacity })
+          : hcItems.map(item => ({ items: [item], keys: [item.key], total: item.total, label: item.label, isGrouped: false }));
+
+        const flattenedSen = (typeof sen === 'string' && sen.includes('+'))
+          ? sen.split('+')
+          : (Array.isArray(sen) ? sen.flatMap(s => typeof s === 'string' && s.includes('+') ? s.split('+') : s) : sen);
+        const isMultiSeniority = Array.isArray(flattenedSen) ? flattenedSen.length > 1 : false;
+        const senLabel = isMultiSeniority ? `[${flattenedSen.join('+')}]` : (Array.isArray(flattenedSen) ? flattenedSen[0] : flattenedSen);
+
+        for (const bin of hcBins) {
+          const mode = bin.total <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+          const pagesNeeded = Math.min(10, Math.ceil(bin.total / APOLLO_PAGE_SIZE));
+          const hcLabel = bin.isGrouped ? `[${bin.keys.join('+')}]` : bin.keys[0];
+          const binLabel = `${hcLabel} ${senLabel}`;
+
+          logAudit({
+            type: bin.isGrouped ? 'CROSS_HEADCOUNT_BIN_COALESCED' : 'SENIORITY_PROBE',
+            label: binLabel,
+            bracket: bin.keys.join(','),
+            seniority: isMultiSeniority ? flattenedSen.join(',') : (Array.isArray(flattenedSen) ? flattenedSen[0] : flattenedSen),
+            leadsCount: bin.total,
+            decision: bin.isGrouped
+              ? `Coalesced ${bin.keys.length} headcounts [${bin.keys.join(',')}] for seniority ${senLabel} into single bin (${bin.total} leads <= ${targetCapacity}).`
+              : `Approved single-headcount cabinet [${binLabel}] (${bin.total} leads).`,
+            mode,
+            pagesNeeded
+          });
+
+          optimalUnits.push({
+            label: binLabel,
+            bracket: bin.keys,
+            seniority: isMultiSeniority ? flattenedSen : (Array.isArray(flattenedSen) ? flattenedSen[0] : flattenedSen),
+            emailStatus: null,
+            keyword: null,
+            total: bin.total,
+            pagesNeeded,
+            mode,
+            isGrouped: bin.isGrouped || isMultiSeniority,
+            _leaf: true,
+            _preflight: true
+          });
+        }
+      }
     }
-    return str;
-  };
 
-  const headers = [
-    'Record_Type',
-    'Step_Number',
-    'Phase',
-    'Probe_Category',
-    'Cabinet_Label',
-    'Headcount_Bracket',
-    'Seniority',
-    'Email_Status',
-    'Leads_Count',
-    'AI_Decision',
-    'Harvest_Mode',
-    'Pages_Needed',
-    'Est_Duration_Sec',
-    'Apollo_Filter_Hash',
-    'Timestamp'
-  ];
+    // Process seniorities grouped by their exact contributing headcounts
+    for (const [hcKey, group] of senioritiesByHcKey.entries()) {
+      const { headcounts, seniorities } = group;
+      const spansAllDecomposed = canUseParentRange && hcKey === allDecomposedKey;
+      const bracket = spansAllDecomposed ? [pool.parentRange] : headcounts;
+      const bracketLabel = bracket.length === 1
+        ? bracket[0]
+        : (spansAllDecomposed ? pool.parentRange : `[${headcounts.join('+')}]`);
 
-  const rows = [];
-  rows.push(headers.join(','));
+      const pooledItems = seniorities.map(s => ({
+        key: s.sen,
+        label: s.sen,
+        total: s.total
+      }));
 
-  // 1. Executive Summary Row
-  const secondsPerPage = typeof options.secondsPerPage === 'number' ? options.secondsPerPage : ESTIMATED_SECONDS_PER_PAGE;
-  const totalPages = Array.isArray(cabinets) ? cabinets.reduce((sum, c) => sum + (c.pagesNeeded || 5), 0) : 0;
-  const totalDuration = totalPages * secondsPerPage;
-  const summaryRow = [
-    'SUMMARY',
-    '0',
-    'PREFLIGHT_COMPLETE',
-    'SYSTEM_AUDIT',
-    `Apollo Preflight Plan (${totalCabinets} Cabinets)`,
-    options.baseFilters?.organization_num_employees_ranges?.join(';') || 'All Headcounts',
-    options.baseFilters?.person_seniorities?.join(';') || 'All Seniorities',
-    options.baseFilters?.contact_email_status?.join(';') || 'All Email Statuses',
-    totalExpectedLeads,
-    `Preflight check successful: ${totalCabinets} micro-cabinets designed across ${totalProbes} density probes. Ready for harvest.`,
-    'Autonomous Multi-Pass',
-    totalPages,
-    totalDuration,
-    currentHash,
-    new Date().toISOString()
-  ];
-  rows.push(summaryRow.map(formatCSVCell).join(','));
+      const bins = (options.coalescePartitions !== false)
+        ? coalescePartitionsIntoBins(pooledItems, { maxBinCapacity: targetCapacity })
+        : pooledItems.map(s => ({ items: [s], keys: [s.key], total: s.total, label: s.label, isGrouped: false }));
 
-  // 2. Section: All Probes and Density Measurements Conducted (Audit Log)
-  if (Array.isArray(auditLog)) {
-    for (const item of auditLog) {
-      const probeRow = [
-        'PROBE_TRY',
-        item.step,
-        'PROBE_AUDIT',
-        item.type || 'BRACKET_PROBE',
-        item.label || '',
-        item.bracket || '',
-        item.seniority || 'All',
-        item.emailStatus || 'All',
-        item.leadsCount !== null && item.leadsCount !== undefined ? item.leadsCount : 'N/A',
-        item.decision || '',
-        item.mode || 'Probing',
-        item.pagesNeeded !== null && item.pagesNeeded !== undefined ? item.pagesNeeded : '',
-        item.pagesNeeded ? item.pagesNeeded * secondsPerPage : '',
-        item.hash || '',
-        item.timestamp || new Date().toISOString()
-      ];
-      rows.push(probeRow.map(formatCSVCell).join(','));
+      for (const bin of bins) {
+        const mode = bin.total <= maxLimit ? 'Top-Down Only' : 'Bidirectional';
+        const pagesNeeded = Math.min(10, Math.ceil(bin.total / APOLLO_PAGE_SIZE));
+        const flattenedSeniorities = (bin.isGrouped ? bin.keys : [bin.keys[0]])
+          .flatMap(k => typeof k === 'string' && k.includes('+') ? k.split('+') : k);
+        const isMultiSeniority = bin.isGrouped || flattenedSeniorities.length > 1;
+        const binLabel = isMultiSeniority ? `${bracketLabel} [${flattenedSeniorities.join('+')}]` : `${bracketLabel} ${flattenedSeniorities[0]}`;
+
+        const isCrossHeadcount = headcounts.length > 1 || spansAllDecomposed;
+        logAudit({
+          type: isMultiSeniority ? (isCrossHeadcount ? 'CROSS_HEADCOUNT_BIN_COALESCED' : 'SENIORITY_BIN_COALESCED') : 'SENIORITY_PROBE',
+          label: binLabel,
+          bracket: bracket.join(','),
+          seniority: flattenedSeniorities.join(','),
+          leadsCount: bin.total,
+          decision: isMultiSeniority
+            ? (isCrossHeadcount
+                ? `Coalesced ${flattenedSeniorities.length} sparse seniorities across [${bracket.join(',')}] (${flattenedSeniorities.join(', ')}) into single bin (${bin.total} leads <= ${targetCapacity}).`
+                : `Coalesced ${flattenedSeniorities.length} sparse seniorities (${flattenedSeniorities.join(', ')}) into single bin (${bin.total} leads <= ${targetCapacity}).`)
+            : (isCrossHeadcount
+                ? `Approved cross-headcount cabinet [${binLabel}] (${bin.total} leads).`
+                : `Approved single-headcount cabinet [${binLabel}] (${bin.total} leads).`),
+          mode,
+          pagesNeeded
+        });
+
+        optimalUnits.push({
+          label: binLabel,
+          bracket,
+          seniority: isMultiSeniority ? flattenedSeniorities : flattenedSeniorities[0],
+          emailStatus: null,
+          keyword: null,
+          total: bin.total,
+          pagesNeeded,
+          mode,
+          isGrouped: bin.isGrouped || isMultiSeniority || isCrossHeadcount,
+          _leaf: true,
+          _preflight: true
+        });
+      }
     }
   }
 
-  // 3. Section: All Final Cabinets Designed for Execution
-  if (Array.isArray(cabinets)) {
-    for (let i = 0; i < cabinets.length; i++) {
-      const c = cabinets[i];
-      const sliceLabel = c.label || (c.bracket ? `Headcount: ${c.bracket[0]}` : `Slice ${i + 1}`);
-      const bracketStr = Array.isArray(c.bracket) ? c.bracket.join(';') : (c.bracket || 'All');
-      const seniorityStr = c.seniority || (options.baseFilters?.person_seniorities?.join(';') || 'All');
-      const emailStr = Array.isArray(c.emailStatus) ? c.emailStatus.join(';') : (c.emailStatus || options.baseFilters?.contact_email_status?.join(';') || 'All');
-      const leadsStr = typeof c.total === 'number' ? c.total : (c.total || 'Dynamic');
-      const modeStr = c.mode || (typeof c.total === 'number' && c.total <= maxLimit ? 'Top-Down Only' : 'Bidirectional');
-      const pagesNeeded = c.pagesNeeded || (typeof c.total === 'number' ? Math.min(10, Math.ceil(c.total / APOLLO_PAGE_SIZE)) : 5);
-      const estSec = pagesNeeded * secondsPerPage;
-      const sliceHash = typeof buildHashForSlice === 'function' ? buildHashForSlice(currentHash, c, 'sanitized_organization_name_unanalyzed', true) : currentHash;
-
-      const cabinetRow = [
-        'DESIGNED_CABINET',
-        i + 1,
-        'EXECUTION_QUEUE',
-        'RESOLVED_SLICE',
-        `[${i + 1}/${totalCabinets}] ${sliceLabel}`,
-        bracketStr,
-        seniorityStr,
-        emailStr,
-        leadsStr,
-        `Scheduled for Live Scraping: Slice ${i + 1} of ${totalCabinets} (${leadsStr} leads)`,
-        modeStr,
-        pagesNeeded,
-        estSec,
-        sliceHash,
-        new Date().toISOString()
-      ];
-      rows.push(cabinetRow.map(formatCSVCell).join(','));
+  // Ensure all units emitted by preflight have preflight tags and leaf protection where granular
+  for (const u of optimalUnits) {
+    u._preflight = true;
+    if (u.bracket && (u.bracket.length > 1 || u.seniority || u.emailStatus || u.subdepartment)) {
+      u._leaf = true;
     }
   }
 
-  return rows.join('\r\n');
+  return options.detailed ? { cabinets: optimalUnits, auditLog, aborted: isAborted(), probesPrunedByMath } : optimalUnits;
 }
 
 // 25. Pre-flight Probe Pacing & Humanized Dwell Calculator
@@ -4170,122 +4646,92 @@ export function mergeSnippetEnrichment(contacts = [], snippetMap = {}) {
   });
 }
 
-// 28. Page-by-Page Harvest Audit & Telemetry CSV Generator
-export function buildHarvestAuditCSV(records = [], summaryStats = {}) {
-  const formatCSVCell = (val) => {
-    let str = sanitizeCSVValue(val, { singleLine: true, escapeFormulas: true });
-    if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
-      return `"${str.replace(/"/g, '""')}"`;
-    }
-    return str;
-  };
+// 28. Turbo Engine Helpers: Dynamic Token Bucket Pacer & Concurrency Pool
 
-  const headers = [
-    'Record_Type',
-    'Event_Number',
-    'Cabinet_Index',
-    'Cabinet_Label',
-    'Headcount_Bracket',
-    'Seniority',
-    'Email_Status',
-    'Pass_Type',
-    'Sort_Direction',
-    'Page_Number',
-    'Cabinet_Total_Leads',
-    'Page_Raw_Leads',
-    'Net_Fresh_Leads_Added',
-    'Duplicate_Leads_Skipped',
-    'Out_Of_Bounds_Skipped',
-    'Cabinet_Cumulative_Leads',
-    'Global_Total_Leads_Harvested',
-    'Request_Latency_Ms',
-    'Pacing_Delay_Ms',
-    'Page_Status',
-    'Timestamp'
-  ];
-
-  const rows = [];
-  rows.push(headers.join(','));
-
-  const validRecords = Array.isArray(records) ? records : [];
-  const totalPagesScraped = validRecords.length;
-  const totalRawLeads = validRecords.reduce((sum, r) => sum + (typeof r.rawLeadsCount === 'number' ? r.rawLeadsCount : 0), 0);
-  const totalFreshLeads = typeof summaryStats.totalHarvested === 'number'
-    ? summaryStats.totalHarvested
-    : validRecords.reduce((sum, r) => sum + (typeof r.freshLeadsCount === 'number' ? r.freshLeadsCount : 0), 0);
-  const totalDuplicates = validRecords.reduce((sum, r) => sum + (typeof r.duplicateLeadsCount === 'number' ? r.duplicateLeadsCount : 0), 0);
-  const totalOutOfBounds = validRecords.reduce((sum, r) => sum + (typeof r.outOfBoundsCount === 'number' ? r.outOfBoundsCount : 0), 0);
-  const totalCabinets = typeof summaryStats.totalCabinets === 'number'
-    ? summaryStats.totalCabinets
-    : new Set(validRecords.map(r => r.sliceIdx)).size;
-
-  const uniqueCabinetsTotals = new Map();
-  for (const r of validRecords) {
-    if (r.sliceIdx !== undefined && typeof r.sliceTotal === 'number' && !uniqueCabinetsTotals.has(r.sliceIdx)) {
-      uniqueCabinetsTotals.set(r.sliceIdx, r.sliceTotal);
-    }
-  }
-  const totalEstimatedLeads = typeof summaryStats.totalEstimatedLeads === 'number'
-    ? summaryStats.totalEstimatedLeads
-    : (uniqueCabinetsTotals.size > 0
-        ? Array.from(uniqueCabinetsTotals.values()).reduce((sum, v) => sum + v, 0)
-        : (validRecords.some(r => typeof r.sliceTotal === 'number') ? validRecords.find(r => typeof r.sliceTotal === 'number').sliceTotal : 'N/A'));
-
-  // 1. Executive Summary Row
-  const summaryRow = [
-    'SUMMARY',
-    '0',
-    `Total: ${totalCabinets} Cabinets`,
-    'Complete Harvest Run Audit',
-    'All Processed Brackets',
-    'All Seniorities',
-    'All Email Statuses',
-    'Bidirectional Multi-Pass',
-    'Company Ascending & Descending',
-    `Total Pages: ${totalPagesScraped}`,
-    totalEstimatedLeads,
-    totalRawLeads,
-    totalFreshLeads,
-    totalDuplicates,
-    totalOutOfBounds,
-    totalFreshLeads,
-    totalFreshLeads,
-    validRecords.length > 0 ? Math.round(validRecords.reduce((sum, r) => sum + (r.latencyMs || 0), 0) / validRecords.length) : 0,
-    validRecords.reduce((sum, r) => sum + (r.pacingMs || 0), 0),
-    'HARVEST_COMPLETED',
-    new Date().toISOString()
-  ];
-  rows.push(summaryRow.map(formatCSVCell).join(','));
-
-  // 2. Page-by-Page Audit Rows
-  for (const r of validRecords) {
-    const pageRow = [
-      'PAGE_AUDIT',
-      r.event !== undefined ? r.event : '',
-      r.sliceIdx !== undefined ? `${r.sliceIdx}/${r.totalSlices || ''}` : '',
-      r.sliceLabel || '',
-      r.bracket || 'All',
-      r.seniority || 'All',
-      r.emailStatus || 'All',
-      r.passLabel || 'Pass 1 (A-Z)',
-      r.sortDirection || 'Company Ascending (A-Z)',
-      r.page !== undefined ? r.page : '',
-      r.sliceTotal !== undefined ? r.sliceTotal : 'Unknown',
-      r.rawLeadsCount !== undefined ? r.rawLeadsCount : 0,
-      r.freshLeadsCount !== undefined ? r.freshLeadsCount : 0,
-      r.duplicateLeadsCount !== undefined ? r.duplicateLeadsCount : 0,
-      r.outOfBoundsCount !== undefined ? r.outOfBoundsCount : 0,
-      r.sliceCumulative !== undefined ? r.sliceCumulative : 0,
-      r.globalCumulative !== undefined ? r.globalCumulative : 0,
-      r.latencyMs !== undefined ? r.latencyMs : '',
-      r.pacingMs !== undefined ? r.pacingMs : '',
-      r.status || 'SUCCESS',
-      r.timestamp || new Date().toISOString()
-    ];
-    rows.push(pageRow.map(formatCSVCell).join(','));
+export class DynamicTokenBucketPacer {
+  constructor(options = {}) {
+    this.minTurboDelay = typeof options.minTurboDelay === 'number' ? options.minTurboDelay : 600;
+    this.maxTurboDelay = typeof options.maxTurboDelay === 'number' ? options.maxTurboDelay : 800;
+    this.moderateDelay = typeof options.moderateDelay === 'number' ? options.moderateDelay : 1200;
+    this.heavyDelay = typeof options.heavyDelay === 'number' ? options.heavyDelay : 2400;
   }
 
-  return rows.join('\r\n');
+  calculateDelay({ remainingQuota = null, status = 200, retryAfterSeconds = null } = {}) {
+    // 1. Rate Limit Triggered (HTTP 429)
+    if (status === 429) {
+      const waitSec = typeof retryAfterSeconds === 'number' && retryAfterSeconds > 0 ? retryAfterSeconds : 15;
+      return (waitSec * 1000) + 1000; // Exact Retry-After + 1s safety buffer
+    }
+
+    // 2. Heavy throttle: remaining quota < 15
+    if (typeof remainingQuota === 'number' && remainingQuota < 15) {
+      const jitter = Math.floor(Math.random() * 800); // 2000 - 2800ms
+      return Math.max(2000, 2000 + jitter);
+    }
+
+    // 3. Moderate throttle: remaining quota 15 - 35
+    if (typeof remainingQuota === 'number' && remainingQuota <= 35) {
+      const jitter = Math.floor(Math.random() * 500); // 1000 - 1500ms
+      return Math.max(1000, 1000 + jitter);
+    }
+
+    // 4. Turbo normal speed: remaining quota > 35 or unknown/unprovided
+    // Uniform randomized jitter between minTurboDelay and maxTurboDelay (default 600 - 800ms)
+    const baseMin = this.minTurboDelay;
+    const baseMax = this.maxTurboDelay;
+    return Math.floor(baseMin + Math.random() * (baseMax - baseMin));
+  }
 }
 
+export class BoundedConcurrencyPool {
+  constructor(concurrency = 3) {
+    this.concurrency = Math.max(1, concurrency);
+    this.activeCount = 0;
+    this.queue = [];
+  }
 
+  async run(taskFn) {
+    if (typeof taskFn !== 'function') return null;
+
+    if (this.activeCount >= this.concurrency) {
+      await new Promise(resolve => this.queue.push(resolve));
+    }
+
+    this.activeCount++;
+    try {
+      return await taskFn();
+    } finally {
+      this.activeCount--;
+      if (this.queue.length > 0) {
+        const next = this.queue.shift();
+        next();
+      }
+    }
+  }
+}
+
+/**
+ * Computes non-colliding inline styles for floating HUD positioning.
+ * Guarantees that top and bottom are mutually exclusive, and left and right
+ * are mutually exclusive to prevent 100vh vertical stretching in position: fixed.
+ */
+export function computeHudInlineStyles(pos) {
+  if (!pos || typeof pos !== 'object') return {};
+  const styles = {};
+  if (pos.top !== undefined) {
+    styles.top = `${pos.top}px`;
+    styles.bottom = 'auto';
+  } else if (pos.bottom !== undefined) {
+    styles.bottom = `${pos.bottom}px`;
+    styles.top = 'auto';
+  }
+
+  if (pos.left !== undefined) {
+    styles.left = `${pos.left}px`;
+    styles.right = 'auto';
+  } else if (pos.right !== undefined) {
+    styles.right = `${pos.right}px`;
+    styles.left = 'auto';
+  }
+  return styles;
+}

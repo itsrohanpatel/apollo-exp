@@ -5,5 +5,13 @@
 !/extension/
 !/extension/**
 
+# Whitelist tests directory
+!/tests/
+!/tests/**
+
+# Whitelist package files
+!package.json
+!package-lock.json
+
 # Whitelist .gitignore itself
 !.gitignore

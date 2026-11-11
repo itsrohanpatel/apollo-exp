@@ -16,36 +16,51 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnStartHarvest = document.getElementById('btnStartHarvest');
   const btnStopHarvest = document.getElementById('btnStopHarvest');
 
-  const tabBtnLeads = document.getElementById('tabBtnLeads');
-  const tabBtnAudits = document.getElementById('tabBtnAudits');
-  const tabPaneLeads = document.getElementById('tabPaneLeads');
-  const tabPaneAudits = document.getElementById('tabPaneAudits');
-
   const btnExportCSV = document.getElementById('btnExportCSV');
   const btnExportCompanyCSV = document.getElementById('btnExportCompanyCSV');
   const btnExportJSON = document.getElementById('btnExportJSON');
   const btnExportCompanyJSON = document.getElementById('btnExportCompanyJSON');
-  const btnExportPreflightPlan = document.getElementById('btnExportPreflightPlan');
-  const btnExportHarvestAudit = document.getElementById('btnExportHarvestAudit');
+  const btnExportDiagnostics = document.getElementById('btnExportDiagnostics');
   const btnClear = document.getElementById('btnClear');
   const previewContainer = document.getElementById('previewContainer');
 
-  // 1. Segmented Export Tabs
-  if (tabBtnLeads && tabBtnAudits) {
-    tabBtnLeads.addEventListener('click', () => {
-      tabBtnLeads.classList.add('active');
-      tabBtnAudits.classList.remove('active');
-      tabPaneLeads.style.display = 'flex';
-      tabPaneAudits.style.display = 'none';
-    });
+  const segBtnTurbo = document.getElementById('segBtnTurbo');
+  const segBtnStandard = document.getElementById('segBtnStandard');
+  let currentEngineMode = 'turbo';
 
-    tabBtnAudits.addEventListener('click', () => {
-      tabBtnAudits.classList.add('active');
-      tabBtnLeads.classList.remove('active');
-      tabPaneLeads.style.display = 'none';
-      tabPaneAudits.style.display = 'flex';
+  function setEngineModeUI(mode) {
+    currentEngineMode = mode === 'standard' ? 'standard' : 'turbo';
+    if (segBtnTurbo && segBtnStandard) {
+      if (currentEngineMode === 'turbo') {
+        segBtnTurbo.classList.add('active');
+        segBtnStandard.classList.remove('active');
+      } else {
+        segBtnStandard.classList.add('active');
+        segBtnTurbo.classList.remove('active');
+      }
+    }
+  }
+
+  // Restore saved engine mode
+  chrome.storage.local.get(['apollo_engine_mode'], (res) => {
+    if (res && res.apollo_engine_mode) {
+      setEngineModeUI(res.apollo_engine_mode);
+    }
+  });
+
+  function applyEngineMode(mode) {
+    setEngineModeUI(mode);
+    chrome.storage.local.set({ apollo_engine_mode: currentEngineMode });
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError || !tabs[0] || !tabs[0].id) return;
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'SET_ENGINE_MODE', mode: currentEngineMode }, () => {
+        if (chrome.runtime.lastError) {}
+      });
     });
   }
+
+  if (segBtnTurbo) segBtnTurbo.addEventListener('click', () => applyEngineMode('turbo'));
+  if (segBtnStandard) segBtnStandard.addEventListener('click', () => applyEngineMode('standard'));
 
   // 2. Preset Pills
   pillButtons.forEach(btn => {
@@ -97,6 +112,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (resp) {
+          if (resp.engineMode) {
+            setEngineModeUI(resp.engineMode);
+          }
           if (typeof resp.totalCompanies === 'number' && companiesCountEl) {
             companiesCountEl.innerText = resp.totalCompanies.toLocaleString();
           }
@@ -129,9 +147,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const limit = parseInt(targetLeadsInput.value, 10) || 50000;
       chrome.tabs.sendMessage(activeTab.id, {
         type: 'START_HARVEST',
-        config: { targetLeadLimit: limit }
-      }, () => {
-        if (chrome.runtime.lastError) return;
+        config: { targetLeadLimit: limit, engineMode: currentEngineMode }
+      }, (resp) => {
+        if (chrome.runtime.lastError) {
+          alert('Could not communicate with the Apollo tab.\n\nPlease refresh the Apollo page (press F5 or Ctrl+R) to connect the updated extension, then click Start again!');
+          return;
+        }
         btnStartHarvest.style.display = 'none';
         btnStopHarvest.style.display = 'flex';
         statusText.innerText = 'Harvesting in Mission Control HUD!';
@@ -170,8 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnExportCompanyCSV) btnExportCompanyCSV.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_COMPANY_CSV' }));
   if (btnExportJSON) btnExportJSON.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_JSON' }));
   if (btnExportCompanyJSON) btnExportCompanyJSON.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_COMPANY_JSON' }));
-  if (btnExportPreflightPlan) btnExportPreflightPlan.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_PREFLIGHT_PLAN_CSV' }));
-  if (btnExportHarvestAudit) btnExportHarvestAudit.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_HARVEST_AUDIT_CSV' }));
+  if (btnExportDiagnostics) btnExportDiagnostics.addEventListener('click', () => sendTabMessage({ type: 'EXPORT_DIAGNOSTICS' }));
 
   // 7. Clear Database
   btnClear.addEventListener('click', () => {
